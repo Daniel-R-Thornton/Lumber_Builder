@@ -327,8 +327,16 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
   const handleMouseUp = useCallback(() => {
     if (ghostMesh) {
-      // Run snap one final time — guarantees refs are fresh for this EXACT release position
+      // ghostMesh is driven by TransformControls and may be at a RAW position
+      // while the visible mesh is at the SNAPPED position (lastValidPos).
+      // Temporarily reposition ghostMesh to the actual visible position for snap detection.
+      const savedPos = ghostMesh.position.clone();
+      const savedRot = ghostMesh.rotation.clone();
+      ghostMesh.position.copy(lastValidPos.current);
+      ghostMesh.rotation.copy(lastValidRot.current);
       computeSnap();
+      ghostMesh.position.copy(savedPos);
+      ghostMesh.rotation.copy(savedRot);
 
       const finalSnapPos = snapPosRef.current;
       const finalSnapJoint = snapJointRef.current;
