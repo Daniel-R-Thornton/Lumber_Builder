@@ -1,0 +1,8 @@
+{
+  "name": "Lumber Builder",
+  "description": "A 3D design tool for building structures with standard US and AUS lumber.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

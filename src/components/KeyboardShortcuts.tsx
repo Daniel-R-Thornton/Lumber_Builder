@@ -6,6 +6,10 @@ export function KeyboardShortcuts() {
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {
+      // Skip when user is typing in an input, textarea, or select
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
       const state = store.getState();
       const ctrl = e.ctrlKey || e.metaKey;
 
@@ -76,8 +80,8 @@ export function KeyboardShortcuts() {
         }
       }
 
-      // Delete/Backspace: remove selected with confirmation
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !ctrl) {
+      // Delete key: remove selected
+      if (e.key === 'Delete' && !ctrl) {
         if (state.selectedJointId) {
           e.preventDefault();
           state.removeJoint(state.selectedJointId);
