@@ -268,10 +268,33 @@ export function PropertiesPanel() {
           </h3>
         </div>
         <div className="p-4 space-y-5 overflow-y-auto">
-          {/* Jointed pieces info */}
-          <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
-            {p1 && <span className="block">{getLumberById(p1.lumberId)?.name} ↔ </span>}
-            {p2 && <span>{getLumberById(p2.lumberId)?.name}</span>}
+          {/* Jointed pieces info with head-side toggle */}
+          <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded flex items-center gap-2">
+            {p1 && (
+              <span className="font-medium text-blue-600">
+                {getLumberById(p1.lumberId)?.name}
+                <span className="text-[9px] text-blue-400 block leading-tight">head</span>
+              </span>
+            )}
+            <span className="text-gray-300">↔</span>
+            {p2 && (
+              <span className="text-gray-600">
+                {getLumberById(p2.lumberId)?.name}
+                <span className="text-[9px] text-gray-400 block leading-tight">tip</span>
+              </span>
+            )}
+            {joint.fixingType !== 'None' && (
+              <button
+                onClick={() => {
+                  const n = joint.normal ? [-joint.normal[0], -joint.normal[1], -joint.normal[2]] as [number, number, number] : undefined;
+                  updateJoint(joint.id, { piece1Id: joint.piece2Id, piece2Id: joint.piece1Id, normal: n });
+                }}
+                className="ml-auto text-[10px] px-1.5 py-0.5 bg-gray-200 hover:bg-gray-300 rounded transition-colors shrink-0"
+                title="Swap which piece the screw head is on"
+              >
+                Swap
+              </button>
+            )}
           </div>
 
           <div>
