@@ -187,9 +187,24 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
         return faceDist < JOINT_BREAK_DIST;
       });
       const stillExists = newJoints.some(j => j.id === state.selectedJointId);
+
+      // Update dimension values for any dimension involving the moved piece
+      const newDims = state.dimensions.map(d => {
+        if (d.piece1Id !== id && d.piece2Id !== id) return d;
+        const dp1 = newPieces.find(p => p.id === d.piece1Id);
+        const dp2 = newPieces.find(p => p.id === d.piece2Id);
+        if (!dp1 || !dp2) return d;
+        const dx = dp1.position[0] - dp2.position[0];
+        const dy = dp1.position[1] - dp2.position[1];
+        const dz = dp1.position[2] - dp2.position[2];
+        const newVal = Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz));
+        return { ...d, value: newVal };
+      });
+
       return {
         pieces: newPieces,
         joints: newJoints,
+        dimensions: newDims,
         selectedJointId: stillExists ? state.selectedJointId : null,
       };
     }
@@ -306,7 +321,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
       if (!dim) return { dimensions: state.dimensions };
 
       // If value changed, also move piece2 to match the new distance
-      if (updates.value && updates.value !== dim.value) {
+      if (updates.value !== undefined && updates.value !== dim.value) {
         const p1 = state.pieces.find(p => p.id === dim.piece1Id);
         const p2 = state.pieces.find(p => p.id === dim.piece2Id);
         if (p1 && p2) {
