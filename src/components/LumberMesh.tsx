@@ -245,14 +245,25 @@ export function LumberMesh({ id }: LumberMeshProps) {
       });
     });
 
-    const threshold = wasSnapped.current ? SNAP_RELEASE : SNAP_ENGAGE;
-    if (bestDist < minSnapGap.current) minSnapGap.current = bestDist;
-    const pullingAway = bestDist > minSnapGap.current + 3;
-    const faceSnap = bestDist < threshold && bestOtherId && bestOtherNormal && !pullingAway;
-
-    if (pullingAway && bestDist > SNAP_RELEASE) {
-      wasSnapped.current = false;
-      minSnapGap.current = Infinity;
+    let faceSnap = false;
+    if (wasSnapped.current) {
+      // Already snapped: use RELEASE threshold, NO pull-away tracking
+      // This lets the user slide along a face without the snap disengaging
+      // due to tiny normal-direction fluctuations from TransformControls.
+      faceSnap = !!(bestDist < SNAP_RELEASE && bestOtherId && bestOtherNormal);
+      if (!faceSnap && bestDist > SNAP_RELEASE + 10) {
+        wasSnapped.current = false;
+        minSnapGap.current = Infinity;
+      }
+    } else {
+      // Not snapped: use ENGAGE threshold with pull-away hysteresis
+      if (bestDist < minSnapGap.current) minSnapGap.current = bestDist;
+      const pullingAway = bestDist > minSnapGap.current + 3;
+      faceSnap = !!(bestDist < SNAP_ENGAGE && bestOtherId && bestOtherNormal && !pullingAway);
+      if (pullingAway && bestDist > SNAP_RELEASE) {
+        wasSnapped.current = false;
+        minSnapGap.current = Infinity;
+      }
     }
     prevNormalGap.current = bestDist;
 
@@ -281,17 +292,22 @@ export function LumberMesh({ id }: LumberMeshProps) {
     // E.g. end of one piece meets the face of another (|dot| ≈ 0)
     let perpBestDist = Infinity;
     let perpOffset: THREE.Vector3 | null = null;
+    let perpOtherId: string | null = null;
+    let perpFaceCenter: THREE.Vector3 | null = null;
+    let perpFaceNormal: THREE.Vector3 | null = null;
 
     ghostPts.forEach(gPt => {
       freshOtherPts.forEach(oPt => {
         const dot = gPt.normal.dot(oPt.normal);
         if (Math.abs(dot) < 0.15 && gPt.type === 'face' && oPt.type === 'face') {
-          // Perpendicular faces: bring ghost face centre to target face centre
           const delta = oPt.point.clone().sub(gPt.point);
           const dist = delta.length();
           if (dist < SNAP_ENGAGE && dist < perpBestDist) {
             perpBestDist = dist;
             perpOffset = delta;
+            perpOtherId = oPt.pieceId;
+            perpFaceCenter = oPt.point;
+            perpFaceNormal = oPt.normal;
           }
         }
       });
@@ -323,10 +339,16 @@ export function LumberMesh({ id }: LumberMeshProps) {
         position: [bestFaceCenter!.x, bestFaceCenter!.y, bestFaceCenter!.z] as [number, number, number],
         normal: [bestFaceNormal!.x, bestFaceNormal!.y, bestFaceNormal!.z] as [number, number, number],
       };
-    } else if (perpOffset) {
-      // Perpendicular (end-to-face) snap
+    } else if (perpOffset && perpOtherId && perpFaceCenter && perpFaceNormal) {
+      // Perpendicular (end-to-face) snap — also create joint
       wasSnapped.current = true;
+      lastTanDist.current = 0; // zero tan distance = create joint
       newSnappedPos = [ghostPos.x + perpOffset.x, ghostPos.y + perpOffset.y, ghostPos.z + perpOffset.z];
+      newJointData = {
+        otherPieceId: perpOtherId,
+        position: [perpFaceCenter.x, perpFaceCenter.y, perpFaceCenter.z] as [number, number, number],
+        normal: [perpFaceNormal.x, perpFaceNormal.y, perpFaceNormal.z] as [number, number, number],
+      };
     } else if (alignTanOffset) {
       wasSnapped.current = true;
       newSnappedPos = [ghostPos.x + alignTanOffset.x, ghostPos.y + alignTanOffset.y, ghostPos.z + alignTanOffset.z];
