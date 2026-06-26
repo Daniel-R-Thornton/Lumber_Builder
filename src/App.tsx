@@ -130,6 +130,7 @@ export default function App() {
                 store.getState().loadState({
                   pieces: bench.pieces,
                   joints: bench.joints,
+                  dimensions: bench.dimensions,
                   region: 'AUS',
                 });
               }}
