@@ -1,12 +1,18 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { useBuilderStore } from '../store';
 import * as THREE from 'three';
 import { Text, Billboard } from '@react-three/drei';
+import { useFrame } from '@react-three/fiber';
 
 interface DimensionLineProps {
   id: string;
 }
 
+/**
+ * Dimension line between two piece centres.
+ * All geometry is updated every frame via useFrame so the line + label
+ * always reflects the current piece positions — no stale data.
+ */
 export function DimensionLine({ id }: DimensionLineProps) {
   const dimension = useBuilderStore(state => state.dimensions.find(d => d.id === id));
   const pieces = useBuilderStore(state => state.pieces);
@@ -21,104 +27,61 @@ export function DimensionLine({ id }: DimensionLineProps) {
 
   const isSelected = selectedDimensionId === id;
 
-  // Compute world-space positions for the line endpoints
-  const { start, end, midpoint, actualDist } = useMemo(() => {
-    const s = new THREE.Vector3(...p1.position);
-    const e = new THREE.Vector3(...p2.position);
-    const mid = s.clone().add(e).multiplyScalar(0.5);
-    // Also compute distance between nearest points on the two pieces
-    const dist = s.distanceTo(e);
-    return { start: s, end: e, midpoint: mid, actualDist: Math.round(dist) };
-  }, [p1.position, p2.position]);
+  // Stable Vector3 refs — mutated every frame to avoid GC pressure
+  const s = useMemo(() => new THREE.Vector3(), []);
+  const e = useMemo(() => new THREE.Vector3(), []);
+  const mid = useMemo(() => new THREE.Vector3(), []);
+  const off = useRef(new THREE.Vector3(...dimension.labelOffset)).current;
+  const dir = useMemo(() => new THREE.Vector3(), []);
+  const perp = useMemo(() => new THREE.Vector3(), []);
+  const lineStart = useMemo(() => new THREE.Vector3(), []);
+  const lineEnd = useMemo(() => new THREE.Vector3(), []);
+  const labelPos = useMemo(() => new THREE.Vector3(), []);
+  const [distStr, setDistStr] = React.useState('0mm');
+  const labelGroupRef = useRef<THREE.Group>(null!);
 
-  // Label position = midpoint + user labelOffset
-  const labelPos = useMemo(() => {
-    const off = new THREE.Vector3(...dimension.labelOffset);
-    return midpoint.clone().add(off);
-  }, [midpoint, dimension.labelOffset]);
+  useFrame(() => {
+    s.set(...p1.position);
+    e.set(...p2.position);
+    mid.copy(s).add(e).multiplyScalar(0.5);
 
-  // Arrow direction from start to end
-  const dir = useMemo(() => end.clone().sub(start).normalize(), [start, end]);
+    const d = Math.round(s.distanceTo(e));
+    const str = `${d}mm`;
+    if (str !== distStr) setDistStr(str);
 
-  // Perpendicular offset for dimension line (parallel offset)
-  const lineOffset = useMemo(() => {
-    // Compute a perpendicular vector to the line direction, biased toward world up
+    // Direction from s → e
+    dir.copy(e).sub(s).normalize();
+
+    // Perpendicular offset (50mm away, for the parallel line)
     const up = new THREE.Vector3(0, 1, 0);
-    const perp = new THREE.Vector3().crossVectors(dir, up).normalize();
-    if (perp.length() < 0.1) {
-      // Line is roughly vertical, use X axis instead
-      perp.set(1, 0, 0);
-    }
-    // Offset the dimension line 50mm away from the direct connection
-    return perp.multiplyScalar(50);
-  }, [dir]);
+    perp.crossVectors(dir, up).normalize();
+    if (perp.length() < 0.01) perp.set(1, 0, 0);
+    perp.multiplyScalar(50);
 
-  // Shifted start/end for the dimension line
-  const lineStart = useMemo(() => start.clone().add(lineOffset), [start, lineOffset]);
-  const lineEnd = useMemo(() => end.clone().add(lineOffset), [end, lineOffset]);
+    lineStart.copy(s).add(perp);
+    lineEnd.copy(e).add(perp);
 
-  // Tick marks from each piece center to the dimension line
-  const tickA1 = start;
-  const tickA2 = lineStart;
-  const tickB1 = end;
-  const tickB2 = lineEnd;
+    off.set(...dimension.labelOffset);
+    labelPos.copy(mid).add(off);
+    if (labelGroupRef.current) labelGroupRef.current.position.copy(labelPos);
+  });
 
   return (
     <group>
-      {/* Tick from piece A to dimension line */}
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={2}
-            array={new Float32Array([
-              tickA1.x, tickA1.y, tickA1.z,
-              tickA2.x, tickA2.y, tickA2.z,
-            ])}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color={isSelected ? '#3b82f6' : '#94a3b8'} transparent opacity={0.5} />
-      </line>
+      {/* Tick line a */}
+      <TickLine a={s} b={lineStart} color={isSelected ? '#3b82f6' : '#94a3b8'} />
+      {/* Tick line b */}
+      <TickLine a={e} b={lineEnd} color={isSelected ? '#3b82f6' : '#94a3b8'} />
+      {/* Dimension line */}
+      <TickLine a={lineStart} b={lineEnd} color={isSelected ? '#3b82f6' : '#64748b'} thick />
 
-      {/* Tick from piece B to dimension line */}
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={2}
-            array={new Float32Array([
-              tickB1.x, tickB1.y, tickB1.z,
-              tickB2.x, tickB2.y, tickB2.z,
-            ])}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color={isSelected ? '#3b82f6' : '#94a3b8'} transparent opacity={0.5} />
-      </line>
+      {/* End caps */}
+      <CapLines center={lineStart} dir={dir} color={isSelected ? '#3b82f6' : '#64748b'} />
+      <CapLines center={lineEnd} dir={dir} color={isSelected ? '#3b82f6' : '#64748b'} />
 
-      {/* Dimension line between the two offset points */}
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={2}
-            array={new Float32Array([
-              lineStart.x, lineStart.y, lineStart.z,
-              lineEnd.x, lineEnd.y, lineEnd.z,
-            ])}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color={isSelected ? '#3b82f6' : '#64748b'} linewidth={2} />
-      </line>
-
-      {/* End caps (small perpendicular lines) */}
-      <CapLine pos={lineStart} dir={dir} color={isSelected ? '#3b82f6' : '#64748b'} />
-      <CapLine pos={lineEnd} dir={dir} color={isSelected ? '#3b82f6' : '#64748b'} />
-
-      {/* Label — wrapped in Billboard to always face camera */}
-      <Billboard position={[labelPos.x, labelPos.y, labelPos.z]}>
+      {/* Distance label — group position updated every frame */}
+      <group ref={labelGroupRef}>
+        <Billboard>
         <Text
           fontSize={40}
           color={isSelected ? '#2563eb' : '#475569'}
@@ -131,44 +94,67 @@ export function DimensionLine({ id }: DimensionLineProps) {
             selectDimension(id);
           }}
         >
-          {`${dimension.value}mm`}
-        </Text>
-
-        {/* Subtle actual distance below */}
-        <Text
-          position={[0, -45, 0]}
-          fontSize={22}
-          color="#94a3b8"
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={3}
-          outlineColor="#ffffff"
-        >
-          {actualDist !== dimension.value ? `(${actualDist}mm)` : ''}
+          {distStr}
         </Text>
       </Billboard>
+      </group>
     </group>
   );
 }
 
-function CapLine({ pos, dir, color }: { pos: THREE.Vector3; dir: THREE.Vector3; color: string }) {
-  const perp = useMemo(() => {
-    const up = new THREE.Vector3(0, 1, 0);
-    const p = new THREE.Vector3().crossVectors(dir, up).normalize();
-    if (p.length() < 0.1) p.set(1, 0, 0);
-    return p.multiplyScalar(12);
-  }, [dir]);
-
-  const a = useMemo(() => pos.clone().add(perp), [pos, perp]);
-  const b = useMemo(() => pos.clone().sub(perp), [pos, perp]);
-
+/** Single line segment updated every frame */
+function TickLine({ a, b, color, thick = false }: { a: THREE.Vector3; b: THREE.Vector3; color: string; thick?: boolean }) {
+  const ref = useRef<THREE.BufferGeometry>(null!);
+  useFrame(() => {
+    if (!ref.current) return;
+    const pos = ref.current.attributes.position;
+    pos.setXYZ(0, a.x, a.y, a.z);
+    pos.setXYZ(1, b.x, b.y, b.z);
+    pos.needsUpdate = true;
+  });
   return (
     <line>
-      <bufferGeometry>
+      <bufferGeometry ref={ref}>
         <bufferAttribute
           attach="attributes-position"
           count={2}
-          array={new Float32Array([a.x, a.y, a.z, b.x, b.y, b.z])}
+          array={new Float32Array(6)}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color={color} transparent opacity={thick ? 1 : 0.5} linewidth={thick ? 2 : 1} />
+    </line>
+  );
+}
+
+/** Two small perpendicular lines at a cap position */
+function CapLines({ center, dir, color }: { center: THREE.Vector3; dir: THREE.Vector3; color: string }) {
+  const perp = useRef(new THREE.Vector3());
+  const capA = useRef(new THREE.Vector3());
+  const capB = useRef(new THREE.Vector3());
+  const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
+  const ref = useRef<THREE.BufferGeometry>(null!);
+
+  useFrame(() => {
+    if (!ref.current) return;
+    perp.current.crossVectors(dir, up).normalize();
+    if (perp.current.length() < 0.01) perp.current.set(1, 0, 0);
+    perp.current.multiplyScalar(12);
+    capA.current.copy(center).add(perp.current);
+    capB.current.copy(center).sub(perp.current);
+    const pos = ref.current.attributes.position;
+    pos.setXYZ(0, capA.current.x, capA.current.y, capA.current.z);
+    pos.setXYZ(1, capB.current.x, capB.current.y, capB.current.z);
+    pos.needsUpdate = true;
+  });
+
+  return (
+    <line>
+      <bufferGeometry ref={ref}>
+        <bufferAttribute
+          attach="attributes-position"
+          count={2}
+          array={new Float32Array(6)}
           itemSize={3}
         />
       </bufferGeometry>

@@ -277,6 +277,26 @@ export function LumberMesh({ id }: LumberMeshProps) {
       });
     });
 
+    // ---- PASS 3: Perpendicular face snap (end-to-face) ----
+    // E.g. end of one piece meets the face of another (|dot| ≈ 0)
+    let perpBestDist = Infinity;
+    let perpOffset: THREE.Vector3 | null = null;
+
+    ghostPts.forEach(gPt => {
+      freshOtherPts.forEach(oPt => {
+        const dot = gPt.normal.dot(oPt.normal);
+        if (Math.abs(dot) < 0.15 && gPt.type === 'face' && oPt.type === 'face') {
+          // Perpendicular faces: bring ghost face centre to target face centre
+          const delta = oPt.point.clone().sub(gPt.point);
+          const dist = delta.length();
+          if (dist < SNAP_ENGAGE && dist < perpBestDist) {
+            perpBestDist = dist;
+            perpOffset = delta;
+          }
+        }
+      });
+    });
+
     // ---- Apply best snap & update refs + state ----
     let newSnappedPos: [number, number, number] | null = null;
     let newJointData: typeof snapJointRef.current = null;
@@ -303,6 +323,10 @@ export function LumberMesh({ id }: LumberMeshProps) {
         position: [bestFaceCenter!.x, bestFaceCenter!.y, bestFaceCenter!.z] as [number, number, number],
         normal: [bestFaceNormal!.x, bestFaceNormal!.y, bestFaceNormal!.z] as [number, number, number],
       };
+    } else if (perpOffset) {
+      // Perpendicular (end-to-face) snap
+      wasSnapped.current = true;
+      newSnappedPos = [ghostPos.x + perpOffset.x, ghostPos.y + perpOffset.y, ghostPos.z + perpOffset.z];
     } else if (alignTanOffset) {
       wasSnapped.current = true;
       newSnappedPos = [ghostPos.x + alignTanOffset.x, ghostPos.y + alignTanOffset.y, ghostPos.z + alignTanOffset.z];

@@ -8,6 +8,7 @@ import { LumberMesh } from './LumberMesh';
 import { JointMesh } from './JointMesh';
 import { DimensionLine } from './DimensionLine';
 import { PendingIndicator } from './PendingIndicator';
+import { MeasureTargets } from './MeasureTargets';
 import { CameraDebugView } from './CameraDebugView';
 import { Move, RotateCw, Maximize2, Ruler, Drill } from 'lucide-react';
 
@@ -149,6 +150,7 @@ export function Scene() {
           ))}
           {/* Tool pending indicators */}
           <PendingIndicator />
+          <MeasureTargets />
         </Suspense>
 
         <Grid 
