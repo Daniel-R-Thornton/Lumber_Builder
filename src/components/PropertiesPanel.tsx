@@ -283,11 +283,28 @@ export function PropertiesPanel() {
                 <span className="text-[9px] text-gray-400 block leading-tight">tip</span>
               </span>
             )}
-            {joint.fixingType !== 'None' && (
+            {joint.fixingType !== 'None' && joint.normal && (
               <button
                 onClick={() => {
-                  const n = joint.normal ? [-joint.normal[0], -joint.normal[1], -joint.normal[2]] as [number, number, number] : undefined;
-                  updateJoint(joint.id, { piece1Id: joint.piece2Id, piece2Id: joint.piece1Id, normal: n });
+                  // Swap pieces + negate normal + reposition joint to new piece2's face
+                  const state = useBuilderStore.getState();
+                  const oldP1 = state.pieces.find(p => p.id === joint.piece1Id);
+                  const oldP2 = state.pieces.find(p => p.id === joint.piece2Id);
+                  if (!oldP1 || !oldP2) return;
+                  const newNorm: [number, number, number] = [-joint.normal![0], -joint.normal![1], -joint.normal![2]];
+                  const newNormV = new THREE.Vector3(...newNorm);
+                  const t2 = pieceThicknessAlong(oldP1, newNormV); // oldP1 is now piece2, thickness along new normal
+                  const newPos: [number, number, number] = [
+                    oldP1.position[0] + newNorm[0] * (t2 / 2),
+                    oldP1.position[1] + newNorm[1] * (t2 / 2),
+                    oldP1.position[2] + newNorm[2] * (t2 / 2),
+                  ];
+                  updateJoint(joint.id, {
+                    piece1Id: joint.piece2Id,
+                    piece2Id: joint.piece1Id,
+                    normal: newNorm,
+                    position: newPos,
+                  });
                 }}
                 className="ml-auto text-[10px] px-1.5 py-0.5 bg-gray-200 hover:bg-gray-300 rounded transition-colors shrink-0"
                 title="Swap which piece the screw head is on"
