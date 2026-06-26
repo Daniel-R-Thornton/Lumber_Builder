@@ -62,7 +62,7 @@ export function KeyboardShortcuts() {
         return;
       }
 
-      // Escape: cancel pending or deselect
+      // Escape: cancel pending → exit tool → deselect
       if (e.key === 'Escape') {
         if (state._dimensionPending) {
           state.cancelPendingDimension();
@@ -70,6 +70,14 @@ export function KeyboardShortcuts() {
         }
         if (state._jointToolPending) {
           state.cancelJointToolPending();
+          return;
+        }
+        if (state.measureMode) {
+          state.toggleMeasureMode();
+          return;
+        }
+        if (state.jointToolMode) {
+          state.toggleJointToolMode();
           return;
         }
         if (state.selectedPieceId || state.selectedJointId || state.selectedDimensionId) {

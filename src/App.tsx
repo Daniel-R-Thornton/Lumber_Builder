@@ -7,7 +7,8 @@ import { BomModal } from './components/BomModal';
 import { KeyboardShortcuts } from './components/KeyboardShortcuts';
 import { useBuilderStore } from './store';
 import { getLumberById } from './data';
-import { Hammer, Calculator, Save, Upload, FileDown } from 'lucide-react';
+import { createSampleBench } from './sample-projects';
+import { Hammer, Calculator, Save, Upload, FileDown, TreePine } from 'lucide-react';
 
 export default function App() {
   const [showBom, setShowBom] = useState(false);
@@ -122,6 +123,21 @@ export default function App() {
             >
               <Upload className="w-4 h-4" />
               <span className="hidden sm:inline">Load</span>
+            </button>
+            <button
+              onClick={() => {
+                const bench = createSampleBench();
+                store.getState().loadState({
+                  pieces: bench.pieces,
+                  joints: bench.joints,
+                  region: 'AUS',
+                });
+              }}
+              className="flex items-center gap-1.5 bg-white border border-gray-300 hover:bg-green-50 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+              title="Load sample garden bench"
+            >
+              <TreePine className="w-4 h-4" />
+              <span className="hidden sm:inline">Sample</span>
             </button>
             <button
               onClick={handleExport}
