@@ -1,4 +1,5 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { useBuilderStore } from '../store';
 import * as THREE from 'three';
 import { Text, Billboard } from '@react-three/drei';
@@ -15,7 +16,7 @@ interface DimensionLineProps {
  */
 export function DimensionLine({ id }: DimensionLineProps) {
   const dimension = useBuilderStore(state => state.dimensions.find(d => d.id === id));
-  const pieces = useBuilderStore(state => Object.values(state.parts));
+  const pieces = useBuilderStore(useShallow(state => Object.values(state.parts)));
   const selectedDimensionId = useBuilderStore(state => state.selectedDimensionId);
   const selectDimension = useBuilderStore(state => state.selectDimension);
 

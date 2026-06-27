@@ -1,4 +1,5 @@
-import React, { Suspense, useMemo, useCallback } from 'react';
+import React, { Suspense, useMemo, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { ErrorBoundary } from './ErrorBoundary';
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
@@ -87,8 +88,8 @@ function SceneControls() {
 }
 
 export function Scene() {
-  const pieces = useBuilderStore(state => Object.values(state.parts));
-  const joints = useBuilderStore(state => Object.values(state.joints));
+  const pieces = useBuilderStore(useShallow(state => Object.values(state.parts)));
+  const joints = useBuilderStore(useShallow(state => Object.values(state.joints)));
   const dimensions = useBuilderStore(state => state.dimensions);
   const selectPiece = useBuilderStore(state => state.selectPiece);
   const selectJoint = useBuilderStore(state => state.selectJoint);

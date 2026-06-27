@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useRef, useCallback, useState, useMemo } from 'react';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
@@ -18,7 +19,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const updatePiece = useBuilderStore(s => s.updatePiece);
   const addJoint = useBuilderStore(s => s.addJoint);
   const transformMode = useBuilderStore(s => s.transformMode);
-  const allPieces = useBuilderStore(s => Object.values(s.parts));
+  const allPieces = useBuilderStore(useShallow(s => Object.values(s.parts)));
   const showDebug = useBuilderStore(s => s.showDebug);
   const setDebugSnap = useBuilderStore(s => s.setDebugSnap);
   const snapThreshold = useBuilderStore(s => s.snapThreshold);

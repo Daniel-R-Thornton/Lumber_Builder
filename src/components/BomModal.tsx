@@ -1,4 +1,5 @@
-import React from 'react';
+import React from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
 import { X, FileText, DollarSign, Calculator } from 'lucide-react';
@@ -8,8 +9,8 @@ interface BomModalProps {
 }
 
 export function BomModal({ onClose }: BomModalProps) {
-  const pieces = useBuilderStore(state => Object.values(state.parts));
-  const joints = useBuilderStore(state => Object.values(state.joints));
+  const pieces = useBuilderStore(useShallow(state => Object.values(state.parts)));
+  const joints = useBuilderStore(useShallow(state => Object.values(state.joints)));
 
   // Group by lumber profile
   const cutlistMap = new Map<string, { lumber: any, cuts: number[], totalLength: number }>();

@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react';
+import React, { useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
 import { generateFasteners } from '../lib/fasteners';
@@ -12,7 +13,7 @@ import * as THREE from 'three';
  * collision detection and spatial registration.
  */
 export function FastenerManager() {
-  const joints = useBuilderStore(s => Object.values(s.joints));
+  const joints = useBuilderStore(useShallow(s => Object.values(s.joints)));
   const parts = useBuilderStore(s => s.parts);
 
   // Generate all fastener placements from joints

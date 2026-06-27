@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react';
+import React, { useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
 import { computeScrewPositions } from '../lib/utils';
@@ -6,7 +7,7 @@ import { Box, Link2, Ruler, Wrench, Layers } from 'lucide-react';
 
 export function TreeOverview() {
   const parts = useBuilderStore(s => s.parts);
-  const joints = useBuilderStore(s => Object.values(s.joints));
+  const joints = useBuilderStore(useShallow(s => Object.values(s.joints)));
   const dimensions = useBuilderStore(s => s.dimensions);
   const { selectedPieceId, selectedJointId, selectedDimensionId, selectPiece, selectJoint, selectDimension } = useBuilderStore();
   const pieces = Object.values(parts);
