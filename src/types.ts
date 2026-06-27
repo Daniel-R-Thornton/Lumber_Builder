@@ -33,10 +33,20 @@ export interface Dimension {
 export type SpacingMode = 'count' | 'every';
 export type FixingAlign = 'left' | 'right' | 'center';
 
+export type JointType = 'butt' | 'tee' | 'corner';
+
+export interface FastenerConfig {
+  count: number;
+  spacing: number;
+  embedPercent: number;
+  manualOverrides?: [number, number, number][];
+}
+
 export interface Joint {
   id: string;
   piece1Id: string;
   piece2Id: string;
+  type: JointType;
   position: [number, number, number];
   normal?: [number, number, number];
   fixingType: FixingType;
@@ -52,5 +62,14 @@ export interface Joint {
   fixingSpacingMode?: SpacingMode;
   /** Alignment for the first/last fastener position */
   fixingAlign?: FixingAlign;
+}
+
+export interface Fastener {
+  id: string;
+  jointId: string;
+  worldPos: [number, number, number];
+  worldNormal: [number, number, number];
+  length: number;
+  headOffset: number;
 }
 

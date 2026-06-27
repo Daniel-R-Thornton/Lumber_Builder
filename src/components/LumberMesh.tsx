@@ -215,6 +215,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
           : lumber.actualWidth;
         const pat = fastenerPattern(fw);
         addJoint({
+          type: 'butt',
           piece1Id: id, piece2Id: snap.otherId,
           position: snap.position, normal: snap.normal,
           fixingType: 'Screws (Wood)', fixingCount: pat.count,

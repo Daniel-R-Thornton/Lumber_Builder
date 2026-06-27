@@ -8,6 +8,7 @@ import { LumberMesh } from './LumberMesh';
 import { JointMesh } from './JointMesh';
 import { DimensionLine } from './DimensionLine';
 import { PendingIndicator } from './PendingIndicator';
+import { FastenerManager } from './FastenerManager';
 import { MeasureTargets } from './MeasureTargets';
 import { HumanScale } from './HumanScale';
 import { DebugOverlay } from './DebugOverlay';
@@ -166,6 +167,7 @@ export function Scene() {
           ))}
           {/* Tool pending indicators */}
           <PendingIndicator />
+          <FastenerManager />
           <MeasureTargets />
           <HumanScale />
           <DebugOverlay />
