@@ -28,13 +28,15 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
   const [isDragging, setIsDragging] = useState(false);
   const [ctrlHeld, setCtrlHeld] = useState(false);
-  const [nearSnap, setNearSnap] = useState<{
+  interface SnapInfo {
     type: 'butt' | 'tee' | 'corner';
     otherId: string;
     offset: THREE.Vector3;
-    position: [number, number, number];
-    normal: [number, number, number];
-  } | null>(null);
+    position: [number, number, number];  // target face centre
+    normal: [number, number, number];    // target face normal
+    ghostNormal: [number, number, number]; // moving piece's face normal at snap
+  }
+  const [nearSnap, setNearSnap] = useState<SnapInfo | null>(null);
 
   if (!piece) return null;
   const lumber = getLumberById(piece.lumberId);
@@ -85,6 +87,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
               offset: mf.n.clone().multiplyScalar(d.dot(mf.n)),
               position: [oface.p.x, oface.p.y, oface.p.z] as [number, number, number],
               normal: [oface.n.x, oface.n.y, oface.n.z] as [number, number, number],
+              ghostNormal: [mf.n.x, mf.n.y, mf.n.z] as [number, number, number],
             };
           }
         }
@@ -101,6 +104,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
               offset: d.clone(),
               position: [oface.p.x, oface.p.y, oface.p.z] as [number, number, number],
               normal: [oface.n.x, oface.n.y, oface.n.z] as [number, number, number],
+              ghostNormal: [mf.n.x, mf.n.y, mf.n.z] as [number, number, number],
             };
           }
         }
@@ -132,7 +136,21 @@ export function LumberMesh({ id }: LumberMeshProps) {
     if (snap) {
       const off: [number, number, number] = [snap.offset.x, snap.offset.y, snap.offset.z];
       const snapped: [number, number, number] = [p[0]+off[0], p[1]+off[1], p[2]+off[2]];
-      updatePiece(id, { position: snapped, rotation: r });
+
+      // Normal-lock rotation: align ghost face normal to target face normal
+      let finalRot = r;
+      if (snap.type === 'butt') {
+        const ghostN = new THREE.Vector3(...snap.ghostNormal).normalize();
+        const targetN = new THREE.Vector3(...snap.normal).normalize();
+        // Rotate ghost so its face normal points opposite to target face normal
+        const q = new THREE.Quaternion().setFromUnitVectors(ghostN, targetN.clone().negate());
+        const curQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...r));
+        curQ.premultiply(q);
+        const e = new THREE.Euler().setFromQuaternion(curQ);
+        finalRot = [e.x, e.y, e.z] as [number, number, number];
+      }
+
+      updatePiece(id, { position: snapped, rotation: finalRot });
 
       const st = useBuilderStore.getState();
       const p1 = st.pieces.find(pp => pp.id === id)!;
