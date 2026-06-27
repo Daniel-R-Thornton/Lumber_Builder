@@ -8,8 +8,8 @@ interface BomModalProps {
 }
 
 export function BomModal({ onClose }: BomModalProps) {
-  const pieces = useBuilderStore(state => state.pieces);
-  const joints = useBuilderStore(state => state.joints);
+  const pieces = useBuilderStore(state => Object.values(state.parts));
+  const joints = useBuilderStore(state => Object.values(state.joints));
 
   // Group by lumber profile
   const cutlistMap = new Map<string, { lumber: any, cuts: number[], totalLength: number }>();

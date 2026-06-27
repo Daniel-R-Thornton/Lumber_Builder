@@ -8,7 +8,7 @@ import { Html } from '@react-three/drei';
 
 export function CameraDebugView() {
   const { camera, scene } = useThree();
-  const pieces = useBuilderStore(state => state.pieces);
+  const pieces = useBuilderStore(state => Object.values(state.parts));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastDrawRef = useRef<number>(0);
 

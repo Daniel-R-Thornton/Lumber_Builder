@@ -46,14 +46,15 @@ function calcLength(
 }
 
 export function PropertiesPanel() {
-  const { selectedPieceId, selectedJointId, selectedDimensionId, pieces, joints, dimensions, updatePiece, removePiece, duplicatePiece, updateJoint, removeJoint, updateDimension, removeDimension } = useBuilderStore();
+  const { selectedPieceId, selectedJointId, selectedDimensionId, dimensions, updatePiece, removePiece, duplicatePiece, updateJoint, removeJoint, updateDimension, removeDimension } = useBuilderStore();
+  const parts = useBuilderStore(s => s.parts);
 
   // ---- All hooks MUST come before any conditional return ----
 
   // Joint-derived data
-  const joint = useMemo(() => selectedJointId ? joints.find(j => j.id === selectedJointId) : null, [joints, selectedJointId]);
-  const p1 = useMemo(() => joint ? pieces.find(p => p.id === joint.piece1Id) : null, [pieces, joint]);
-  const p2 = useMemo(() => joint ? pieces.find(p => p.id === joint.piece2Id) : null, [pieces, joint]);
+  const joint = useMemo(() => selectedJointId ? (useBuilderStore.getState().joints[selectedJointId] || null) : null, [selectedJointId]);
+  const p1 = useMemo(() => joint ? (parts[joint.piece1Id] || null) : null, [parts, joint]);
+  const p2 = useMemo(() => joint ? (parts[joint.piece2Id] || null) : null, [parts, joint]);
 
   const jointNormal = useMemo(() => {
     if (!joint?.normal) return new THREE.Vector3(0, 1, 0);
@@ -64,22 +65,22 @@ export function PropertiesPanel() {
   const piece2Thickness = useMemo(() => (p2 ? pieceThicknessAlong(p2, jointNormal.clone().negate()) : 38), [p2, jointNormal]);
 
   // Current selected piece (used in piece view)
-  const piece = useMemo(() => pieces.find(p => p.id === selectedPieceId), [pieces, selectedPieceId]);
+  const piece = useMemo(() => selectedPieceId ? (parts[selectedPieceId] || null) : null, [parts, selectedPieceId]);
   const lumber = useMemo(() => (piece ? getLumberById(piece.lumberId) : null), [piece]);
 
   // Current selected dimension
   const dimension = useMemo(() => selectedDimensionId ? dimensions.find(d => d.id === selectedDimensionId) : null, [dimensions, selectedDimensionId]);
-  const dimP1 = useMemo(() => dimension ? pieces.find(p => p.id === dimension.piece1Id) : null, [pieces, dimension]);
-  const dimP2 = useMemo(() => dimension ? pieces.find(p => p.id === dimension.piece2Id) : null, [pieces, dimension]);
+  const dimP1 = useMemo(() => dimension ? (parts[dimension.piece1Id] || null) : null, [parts, dimension]);
+  const dimP2 = useMemo(() => dimension ? (parts[dimension.piece2Id] || null) : null, [parts, dimension]);
 
   // Handlers — defined unconditionally so hook count is stable
   const handleTypeChange = useCallback((newType: FixingType) => {
     const state = useBuilderStore.getState();
-    const j = state.joints.find(jj => jj.id === selectedJointId);
+    const j = state.joints[selectedJointId || ''];
     if (!j) return;
 
-    const jP1 = state.pieces.find(p => p.id === j.piece1Id);
-    const jP2 = state.pieces.find(p => p.id === j.piece2Id);
+    const jP1 = state.parts[j.piece1Id];
+    const jP2 = state.parts[j.piece2Id];
     const jNorm = j.normal ? new THREE.Vector3(...j.normal) : new THREE.Vector3(0, 1, 0);
     const t1 = jP1 ? pieceThicknessAlong(jP1, jNorm) : 38;
     const t2 = jP2 ? pieceThicknessAlong(jP2, jNorm.clone().negate()) : 38;
@@ -98,12 +99,12 @@ export function PropertiesPanel() {
 
   const handleEmbedChange = useCallback((pct: number) => {
     const state = useBuilderStore.getState();
-    const j = state.joints.find(jj => jj.id === selectedJointId);
+    const j = state.joints[selectedJointId || ''];
     if (!j) return;
 
     const clamped = Math.max(10, Math.min(100, pct));
-    const jP1 = state.pieces.find(p => p.id === j.piece1Id);
-    const jP2 = state.pieces.find(p => p.id === j.piece2Id);
+    const jP1 = state.parts[j.piece1Id];
+    const jP2 = state.parts[j.piece2Id];
     const jNorm = j.normal ? new THREE.Vector3(...j.normal) : new THREE.Vector3(0, 1, 0);
     const t1 = jP1 ? pieceThicknessAlong(jP1, jNorm) : 38;
     const t2 = jP2 ? pieceThicknessAlong(jP2, jNorm.clone().negate()) : 38;
@@ -288,8 +289,8 @@ export function PropertiesPanel() {
                 onClick={() => {
                   // Swap pieces + negate normal + reposition joint to new piece2's face
                   const state = useBuilderStore.getState();
-                  const oldP1 = state.pieces.find(p => p.id === joint.piece1Id);
-                  const oldP2 = state.pieces.find(p => p.id === joint.piece2Id);
+                  const oldP1 = state.parts[joint.piece1Id];
+                  const oldP2 = state.parts[joint.piece2Id];
                   if (!oldP1 || !oldP2) return;
                   const newNorm: [number, number, number] = [-joint.normal![0], -joint.normal![1], -joint.normal![2]];
                   const newNormV = new THREE.Vector3(...newNorm);

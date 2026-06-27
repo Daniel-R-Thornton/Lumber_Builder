@@ -15,7 +15,7 @@ interface DimensionLineProps {
  */
 export function DimensionLine({ id }: DimensionLineProps) {
   const dimension = useBuilderStore(state => state.dimensions.find(d => d.id === id));
-  const pieces = useBuilderStore(state => state.pieces);
+  const pieces = useBuilderStore(state => Object.values(state.parts));
   const selectedDimensionId = useBuilderStore(state => state.selectedDimensionId);
   const selectDimension = useBuilderStore(state => state.selectDimension);
 

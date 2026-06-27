@@ -5,7 +5,11 @@ import { computeScrewPositions } from '../lib/utils';
 import { Box, Link2, Ruler, Wrench, Layers } from 'lucide-react';
 
 export function TreeOverview() {
-  const { pieces, joints, dimensions, selectedPieceId, selectedJointId, selectedDimensionId, selectPiece, selectJoint, selectDimension } = useBuilderStore();
+  const parts = useBuilderStore(s => s.parts);
+  const joints = useBuilderStore(s => Object.values(s.joints));
+  const dimensions = useBuilderStore(s => s.dimensions);
+  const { selectedPieceId, selectedJointId, selectedDimensionId, selectPiece, selectJoint, selectDimension } = useBuilderStore();
+  const pieces = Object.values(parts);
 
   // Group joints by unique piece pair (normalised: smaller id first)
   const connections = useMemo(() => {
@@ -56,8 +60,8 @@ export function TreeOverview() {
           <div className="border-t border-gray-100 pt-2 mt-2">
             {connections.map(([key, connJoints]) => {
               const [idA, idB] = key.split('|');
-              const pA = pieces.find(p => p.id === idA);
-              const pB = pieces.find(p => p.id === idB);
+              const pA = parts[idA];
+              const pB = parts[idB];
               const lA = pA ? getLumberById(pA.lumberId) : null;
               const lB = pB ? getLumberById(pB.lumberId) : null;
 

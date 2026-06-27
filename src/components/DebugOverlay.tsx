@@ -13,7 +13,7 @@ export function DebugOverlay() {
 }
 
 function DebugContent() {
-  const pieces = useBuilderStore(s => s.pieces);
+  const pieces = useBuilderStore(s => Object.values(s.parts));
   const selectedId = useBuilderStore(s => s.selectedPieceId);
   const snapData = useBuilderStore(s => s._debugSnap);
 

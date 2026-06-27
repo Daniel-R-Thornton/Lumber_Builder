@@ -87,8 +87,8 @@ function SceneControls() {
 }
 
 export function Scene() {
-  const pieces = useBuilderStore(state => state.pieces);
-  const joints = useBuilderStore(state => state.joints);
+  const pieces = useBuilderStore(state => Object.values(state.parts));
+  const joints = useBuilderStore(state => Object.values(state.joints));
   const dimensions = useBuilderStore(state => state.dimensions);
   const selectPiece = useBuilderStore(state => state.selectPiece);
   const selectJoint = useBuilderStore(state => state.selectJoint);

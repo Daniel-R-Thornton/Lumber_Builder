@@ -10,7 +10,7 @@ interface JointMeshProps { id: string }
  * This component only shows a clickable hit area + selection highlight.
  */
 export function JointMesh({ id }: JointMeshProps) {
-  const joint = useBuilderStore(s => s.joints.find(j => j.id === id));
+  const joint = useBuilderStore(s => s.joints[id] || null);
   const selectedJointId = useBuilderStore(s => s.selectedJointId);
   const selectJoint = useBuilderStore(s => s.selectJoint);
 

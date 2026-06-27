@@ -12,13 +12,13 @@ interface LumberMeshProps { id: string }
  * Snap on release with three joint types + fastener patterns.
  * ------------------------------------------------------------ */
 export function LumberMesh({ id }: LumberMeshProps) {
-  const piece = useBuilderStore(s => s.pieces.find(p => p.id === id));
+  const piece = useBuilderStore(s => s.parts[id] || null);
   const selectedPieceId = useBuilderStore(s => s.selectedPieceId);
   const selectPiece = useBuilderStore(s => s.selectPiece);
   const updatePiece = useBuilderStore(s => s.updatePiece);
   const addJoint = useBuilderStore(s => s.addJoint);
   const transformMode = useBuilderStore(s => s.transformMode);
-  const allPieces = useBuilderStore(s => s.pieces);
+  const allPieces = useBuilderStore(s => Object.values(s.parts));
   const showDebug = useBuilderStore(s => s.showDebug);
   const setDebugSnap = useBuilderStore(s => s.setDebugSnap);
   const snapThreshold = useBuilderStore(s => s.snapThreshold);
@@ -68,7 +68,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
     const myF = getFaces(pos, rot, lumber.actualWidth, lumber.actualDepth, piece.length);
     let best = Infinity, bestData: typeof nearSnap = null;
 
-    const freshPieces = useBuilderStore.getState().pieces;
+    const freshPieces = Object.values(useBuilderStore.getState().parts);
     if (showDebug && freshPieces.some(p => p.id === id)) {
       // Verify current piece is in the list but skipped
     }
@@ -204,8 +204,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
       // Create joint
       const st = useBuilderStore.getState();
-      const p1 = st.pieces.find(pp => pp.id === id)!;
-      const p2 = st.pieces.find(pp => pp.id === snap.otherId);
+      const p1 = st.parts[id]!;
+      const p2 = st.parts[snap.otherId];
       if (p1 && p2) {
         const t1 = thick(p1, targetN);
         const t2 = thick(p2, targetN.clone().negate());
@@ -215,7 +215,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
           : lumber.actualWidth;
         const pat = fastenerPattern(fw);
         addJoint({
-          type: 'butt',
+          type: 'butt', dirty: false,
           piece1Id: id, piece2Id: snap.otherId,
           position: snap.position, normal: snap.normal,
           fixingType: 'Screws (Wood)', fixingCount: pat.count,

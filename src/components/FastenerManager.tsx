@@ -12,16 +12,16 @@ import * as THREE from 'three';
  * collision detection and spatial registration.
  */
 export function FastenerManager() {
-  const joints = useBuilderStore(s => s.joints);
-  const pieces = useBuilderStore(s => s.pieces);
+  const joints = useBuilderStore(s => Object.values(s.joints));
+  const parts = useBuilderStore(s => s.parts);
 
   // Generate all fastener placements from joints
   const allFasteners = useMemo(() => {
     const result: { worldPos: THREE.Vector3; worldNormal: THREE.Vector3; length: number; headOffset: number; jointId: string }[] = [];
     for (const j of joints) {
       if (j.fixingType === 'None' || j.fixingType === 'Brackets') continue;
-      const p1 = pieces.find(p => p.id === j.piece1Id);
-      const p2 = pieces.find(p => p.id === j.piece2Id);
+      const p1 = parts[j.piece1Id];
+      const p2 = parts[j.piece2Id];
       if (!p1 || !p2) continue;
       const { placements } = generateFasteners(j, p1, p2);
       for (const p of placements) {
@@ -29,7 +29,7 @@ export function FastenerManager() {
       }
     }
     return result;
-  }, [joints, pieces]);
+  }, [joints, parts]);
 
   return (
     <group>

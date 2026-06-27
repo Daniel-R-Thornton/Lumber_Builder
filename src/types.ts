@@ -14,10 +14,11 @@ export type FixingType = 'None' | 'Screws (Wood)' | 'Screws (Pocket)' | 'Nails' 
 export interface ScenePiece {
   id: string;
   lumberId: string;
-  length: number; // in mm
+  length: number;
   position: [number, number, number];
   rotation: [number, number, number];
   color?: string;
+  jointIds: string[]; // FK → Joint
 }
 
 export interface Dimension {
@@ -54,14 +55,11 @@ export interface Joint {
   fixingSpacing?: number;
   fixingOffset?: number;
   fixingAngle?: number;
-  /** Length of each fastener in mm. Auto-calculated for bolts; user-selectable for screws/nails. */
   fixingLength?: number;
-  /** How far into piece2 the fastener extends, as % of piece2 thickness. Default ~67 for screws, ~75 for nails. */
   fixingEmbedPercent?: number;
-  /** Spacing mode: 'count' = N fasteners at spacing S; 'every' = one every X mm */
   fixingSpacingMode?: SpacingMode;
-  /** Alignment for the first/last fastener position */
   fixingAlign?: FixingAlign;
+  dirty: boolean;
 }
 
 export interface Fastener {

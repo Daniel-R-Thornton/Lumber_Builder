@@ -11,7 +11,7 @@ import * as THREE from 'three';
  */
 export function MeasureTargets() {
   const measureMode = useBuilderStore(state => state.measureMode);
-  const pieces = useBuilderStore(state => state.pieces);
+  const pieces = useBuilderStore(state => Object.values(state.parts));
 
   if (!measureMode || pieces.length === 0) return null;
 
