@@ -166,14 +166,22 @@ export function LumberMesh({ id }: LumberMeshProps) {
         }
       } else if (ghostMesh && lumber) {
         // Translate/rotate mode: collision + snap
-        const ghostOBB = new OBB();
-        ghostOBB.halfSize.set(lumber.actualWidth / 2 - 0.1, lumber.actualDepth / 2 - 0.1, piece.length / 2 - 0.1);
         const targetPos = snappedPos ? new THREE.Vector3(...snappedPos) : ghostMesh.position;
         const targetRot = ghostMesh.rotation;
-        ghostOBB.center.copy(targetPos);
-        ghostOBB.rotation.setFromMatrix4(new THREE.Matrix4().makeRotationFromEuler(targetRot));
-        const isColliding = allOtherOBBs.some(obb => obb.intersectsOBB(ghostOBB, Number.EPSILON));
-        if (!isColliding) {
+
+        // When snap is active, skip collision — the snap ensures valid placement.
+        // Collision would block face-to-face snap since OBBs overlap at contact.
+        if (!snappedPos) {
+          const ghostOBB = new OBB();
+          ghostOBB.halfSize.set(lumber.actualWidth / 2 - 2, lumber.actualDepth / 2 - 2, piece.length / 2 - 2);
+          ghostOBB.center.copy(targetPos);
+          ghostOBB.rotation.setFromMatrix4(new THREE.Matrix4().makeRotationFromEuler(targetRot));
+          const isColliding = allOtherOBBs.some(obb => obb.intersectsOBB(ghostOBB, Number.EPSILON));
+          if (!isColliding) {
+            lastValidPos.current.copy(targetPos);
+            lastValidRot.current.copy(targetRot);
+          }
+        } else {
           lastValidPos.current.copy(targetPos);
           lastValidRot.current.copy(targetRot);
         }
