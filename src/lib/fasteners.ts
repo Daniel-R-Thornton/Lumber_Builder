@@ -31,7 +31,7 @@ export function generateFasteners(
   const targetN = joint.normal ? new THREE.Vector3(...joint.normal).normalize() : new THREE.Vector3(0, 1, 0);
   const t1 = thicknessAlong(p1, targetN);
   const t2 = thicknessAlong(p2, targetN.clone().negate());
-  const fastenerLen = Math.round(t2 + t1 * 0.75);
+  const fastenerLen = Math.round(t1 + t2 * 0.75);
 
   // Get the distribution pattern along the face
   const faceWidth = jointType === 'butt'
@@ -48,7 +48,7 @@ export function generateFasteners(
 
   // Generate positions
   const placements: FastenerPlacement[] = [];
-  const headOff = Math.min(fastenerLen - 2, t2 + 2); // head flush with secondary surface
+  const headOff = Math.min(fastenerLen - 2, t1 + 2); // head flush with primary surface
 
   // Joint position in world space
   const jointPos = new THREE.Vector3(...joint.position);
