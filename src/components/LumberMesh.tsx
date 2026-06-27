@@ -30,6 +30,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
   const [isDragging, setIsDragging] = useState(false);
   const [ctrlHeld, setCtrlHeld] = useState(false);
+  const snapLockRef = useRef<{ targetId: string; targetPos: THREE.Vector3; targetNorm: THREE.Vector3 } | null>(null);
   interface SnapInfo {
     type: 'butt' | 'tee' | 'corner';
     otherId: string;
@@ -148,7 +149,11 @@ export function LumberMesh({ id }: LumberMeshProps) {
   }
 
   // ---- Dragging ----
-  const onDragStart = useCallback(() => { setIsDragging(true); setNearSnap(null); }, []);
+  const onDragStart = useCallback(() => {
+    setIsDragging(true); setNearSnap(null);
+    snapLockRef.current = null; // release any previous snap lock
+  }, []);
+
   const onDragEnd = useCallback(() => {
     setIsDragging(false);
     const m = meshRef.current; if (!m) return;
@@ -158,50 +163,45 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setNearSnap(null);
 
     if (snap) {
-      if (showDebug) console.log(`[SNAP-END] type=${snap.type} target=${snap.otherId.slice(0,6)} offset=(${snap.offset.x.toFixed(0)},${snap.offset.y.toFixed(0)},${snap.offset.z.toFixed(0)})`);
+      if (showDebug) console.log(`[SNAP-END] type=${snap.type} target=${snap.otherId.slice(0,6)}`);
 
-      // STEP 1: Compute rotation to align face normals
+      // --- Surface-to-surface positioning ---
+      // finalPos = targetFaceCentre + targetNormal * (movingPieceThickness / 2)
+      const targetFC = new THREE.Vector3(...snap.position);
+      const targetN = new THREE.Vector3(...snap.normal).normalize();
+
+      // Compute moving piece thickness along the snap direction
+      const movingN = new THREE.Vector3(...snap.ghostNormal).normalize();
+      const movingThick = thick(piece, movingN);
+
+      // Lock rotation: align ghost normal opposite to target normal
       let finalRot = r;
       if (snap.type === 'butt') {
-        const ghostN = new THREE.Vector3(...snap.ghostNormal);
-        const targetN = new THREE.Vector3(...snap.normal);
-        const q = new THREE.Quaternion().setFromUnitVectors(ghostN, targetN.clone().negate());
+        const q = new THREE.Quaternion().setFromUnitVectors(movingN, targetN.clone().negate());
         const curQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...r));
         curQ.premultiply(q);
         const e = new THREE.Euler().setFromQuaternion(curQ);
         finalRot = [e.x, e.y, e.z] as [number, number, number];
       }
 
-      // STEP 2: Recompute face centres with the NEW rotation
-      // The ghost is at position p with the NEW rotation finalRot.
-      // Find the face whose normal best opposes the target, then compute
-      // the position offset to bring THAT face centre to the target.
-      const newFaces = getFaces(p, finalRot, lumber.actualWidth, lumber.actualDepth, piece.length);
-      const targetN = new THREE.Vector3(...snap.normal).normalize();
-      let bestFace = newFaces[0];
-      let bestDot = -Infinity;
-      for (const f of newFaces) {
-        const d = f.n.dot(targetN);
-        if (d < bestDot) { bestDot = d; bestFace = f; }
-      }
-      // Offset to bring bestFace.p to target face centre (snap.position)
-      const snapTarget = new THREE.Vector3(...snap.position);
-      const positionOffset = snapTarget.clone().sub(bestFace.p);
+      // Position: target face centre + half moving thickness along target normal
       const snapped: [number, number, number] = [
-        p[0] + positionOffset.x,
-        p[1] + positionOffset.y,
-        p[2] + positionOffset.z,
+        targetFC.x + targetN.x * (movingThick / 2),
+        targetFC.y + targetN.y * (movingThick / 2),
+        targetFC.z + targetN.z * (movingThick / 2),
       ];
+
+      if (showDebug) console.log(`[SNAP] finalPos=(${snapped.map(v=>v.toFixed(0)).join(',')})  targetFC=(${targetFC.x.toFixed(0)},${targetFC.y.toFixed(0)},${targetFC.z.toFixed(0)})  normal=(${targetN.x.toFixed(2)},${targetN.y.toFixed(2)},${targetN.z.toFixed(2)})  thick=${movingThick}`);
 
       updatePiece(id, { position: snapped, rotation: finalRot });
 
+      // Create joint
       const st = useBuilderStore.getState();
       const p1 = st.pieces.find(pp => pp.id === id)!;
       const p2 = st.pieces.find(pp => pp.id === snap.otherId);
       if (p1 && p2) {
-        const nv = new THREE.Vector3(...snap.normal);
-        const t1 = thick(p1, nv);
-        const t2 = thick(p2, nv.clone().negate());
+        const t1 = thick(p1, targetN);
+        const t2 = thick(p2, targetN.clone().negate());
         const p2l = getLumberById(p2.lumberId);
         const fw = snap.type === 'butt'
           ? Math.min(lumber.actualWidth, p2l?.actualWidth || 90)
@@ -218,17 +218,38 @@ export function LumberMesh({ id }: LumberMeshProps) {
     } else {
       updatePiece(id, { position: p, rotation: r });
     }
-    // Do NOT reset mesh position here — piece in closure is stale.
-    // The next render's position={piece.position} prop will sync it.
-  }, [id, updatePiece, addJoint, piece, allPieces, lumber, ctrlHeld]);
+  }, [id, updatePiece, addJoint, piece, allPieces, lumber, ctrlHeld, showDebug]);
 
-  // ---- useFrame: update nearSnap during drag (visual only) ----
+  // ---- useFrame: proximity check + snap lock ----
   useFrame(() => {
     if (!isDragging || !meshRef.current) { setNearSnap(null); return; }
-    const p: [number, number, number] = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
+    const mp = meshRef.current.position;
+
+    // Snap lock: if locked and still within 10mm of target, keep locked
+    if (snapLockRef.current) {
+      const d = mp.distanceTo(snapLockRef.current.targetPos);
+      if (d > 10) snapLockRef.current = null; // release lock
+      else { setNearSnap(null); return; } // still locked, no new detection
+    }
+
+    const p: [number, number, number] = [mp.x, mp.y, mp.z];
     const r: [number, number, number] = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
     const snap = ctrlHeld ? null : findSnap(p, r);
     setNearSnap(snap);
+
+    // Acquire snap lock when within 5mm
+    if (snap) {
+      const d = new THREE.Vector3(...snap.position).distanceTo(
+        new THREE.Vector3(p[0]+snap.offset.x, p[1]+snap.offset.y, p[2]+snap.offset.z)
+      );
+      if (d < 5) {
+        snapLockRef.current = {
+          targetId: snap.otherId,
+          targetPos: new THREE.Vector3(...snap.position),
+          targetNorm: new THREE.Vector3(...snap.normal),
+        };
+      }
+    }
   });
 
   // ---- Ctrl key tracking ----
