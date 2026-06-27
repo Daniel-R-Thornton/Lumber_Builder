@@ -134,21 +134,38 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setNearSnap(null);
 
     if (snap) {
-      const off: [number, number, number] = [snap.offset.x, snap.offset.y, snap.offset.z];
-      const snapped: [number, number, number] = [p[0]+off[0], p[1]+off[1], p[2]+off[2]];
-
-      // Normal-lock rotation: align ghost face normal to target face normal
+      // STEP 1: Compute rotation to align face normals
       let finalRot = r;
       if (snap.type === 'butt') {
-        const ghostN = new THREE.Vector3(...snap.ghostNormal).normalize();
-        const targetN = new THREE.Vector3(...snap.normal).normalize();
-        // Rotate ghost so its face normal points opposite to target face normal
+        const ghostN = new THREE.Vector3(...snap.ghostNormal);
+        const targetN = new THREE.Vector3(...snap.normal);
         const q = new THREE.Quaternion().setFromUnitVectors(ghostN, targetN.clone().negate());
         const curQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...r));
         curQ.premultiply(q);
         const e = new THREE.Euler().setFromQuaternion(curQ);
         finalRot = [e.x, e.y, e.z] as [number, number, number];
       }
+
+      // STEP 2: Recompute face centres with the NEW rotation
+      // The ghost is at position p with the NEW rotation finalRot.
+      // Find the face whose normal best opposes the target, then compute
+      // the position offset to bring THAT face centre to the target.
+      const newFaces = getFaces(p, finalRot, lumber.actualWidth, lumber.actualDepth, piece.length);
+      const targetN = new THREE.Vector3(...snap.normal).normalize();
+      let bestFace = newFaces[0];
+      let bestDot = -Infinity;
+      for (const f of newFaces) {
+        const d = f.n.dot(targetN);
+        if (d < bestDot) { bestDot = d; bestFace = f; }
+      }
+      // Offset to bring bestFace.p to target face centre (snap.position)
+      const snapTarget = new THREE.Vector3(...snap.position);
+      const positionOffset = snapTarget.clone().sub(bestFace.p);
+      const snapped: [number, number, number] = [
+        p[0] + positionOffset.x,
+        p[1] + positionOffset.y,
+        p[2] + positionOffset.z,
+      ];
 
       updatePiece(id, { position: snapped, rotation: finalRot });
 
