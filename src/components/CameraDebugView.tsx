@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { useThree, useFrame } from '@react-three/fiber';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
@@ -8,7 +9,7 @@ import { Html } from '@react-three/drei';
 
 export function CameraDebugView() {
   const { camera, scene } = useThree();
-  const pieces = useBuilderStore(state => state.pieces);
+  const pieces = useBuilderStore(useShallow(state => Object.values(state.parts)));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastDrawRef = useRef<number>(0);
 

@@ -1,4 +1,5 @@
-import React, { useRef } from 'react';
+import React, { useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
 import { getSnapPoints } from '../lib/snap';
@@ -11,7 +12,7 @@ import * as THREE from 'three';
  */
 export function MeasureTargets() {
   const measureMode = useBuilderStore(state => state.measureMode);
-  const pieces = useBuilderStore(state => state.pieces);
+  const pieces = useBuilderStore(useShallow(state => Object.values(state.parts)));
 
   if (!measureMode || pieces.length === 0) return null;
 

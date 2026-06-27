@@ -1,692 +1,474 @@
-import React, { useRef, useState, useMemo, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import React, { useRef, useCallback, useState, useMemo } from 'react';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
 import { TransformControls } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { OBB } from 'three-stdlib';
-import { getSnapPoints, SnapPoint } from '../lib/snap';
-import { pieceThicknessAlong } from '../lib/utils';
-import { ScenePiece, StandardLumber } from '../types';
 
-interface LumberMeshProps {
-  id: string;
-}
+interface LumberMeshProps { id: string }
 
-const SNAP_ENGAGE = 15;
-const SNAP_RELEASE = 22;
-const ALIGN_ENGAGE = 80;
-const JOINT_TAN_THRESHOLD = 20;
-
-/** Snap a 3D point to the nearest vertex of a piece (for measure tool) */
-function snapToVertex(
-  pieceId: string,
-  point: [number, number, number],
-  allPieces: ScenePiece[]
-): [number, number, number] {
-  const p = allPieces.find(p => p.id === pieceId);
-  if (!p) return point;
-  const l = getLumberById(p.lumberId);
-  if (!l) return point;
-  const corners = getSnapPoints(p.position, p.rotation, l.actualWidth, l.actualDepth, p.length)
-    .filter(pt => pt.type === 'corner');
-  if (corners.length === 0) return point;
-  const click = new THREE.Vector3(...point);
-  let best = corners[0];
-  let bestDist = click.distanceToSquared(best.point);
-  for (let i = 1; i < corners.length; i++) {
-    const d = click.distanceToSquared(corners[i].point);
-    if (d < bestDist) {
-      bestDist = d;
-      best = corners[i];
-    }
-  }
-  return [best.point.x, best.point.y, best.point.z];
-}
-
+/* ---------------------------------------------------------------
+ * Core part: single mesh, TransformControls-driven.
+ * Snap on release with three joint types + fastener patterns.
+ * ------------------------------------------------------------ */
 export function LumberMesh({ id }: LumberMeshProps) {
-  const piece = useBuilderStore(state => state.pieces.find(p => p.id === id));
-  const selectedPieceId = useBuilderStore(state => state.selectedPieceId);
-  const selectPiece = useBuilderStore(state => state.selectPiece);
-  const updatePiece = useBuilderStore(state => state.updatePiece);
-  const addJoint = useBuilderStore(state => state.addJoint);
-  const transformMode = useBuilderStore(state => state.transformMode);
-  const pieces = useBuilderStore(state => state.pieces);
-  const otherPieces = useMemo(() => pieces.filter(p => p.id !== id), [pieces, id]);
+  const piece = useBuilderStore(s => s.parts[id] || null);
+  const selectedPieceId = useBuilderStore(s => s.selectedPieceId);
+  const selectPiece = useBuilderStore(s => s.selectPiece);
+  const updatePiece = useBuilderStore(s => s.updatePiece);
+  const addJoint = useBuilderStore(s => s.addJoint);
+  const transformMode = useBuilderStore(s => s.transformMode);
+  const allPieces = useBuilderStore(useShallow(s => Object.values(s.parts)));
+  const showDebug = useBuilderStore(s => s.showDebug);
+  const setDebugSnap = useBuilderStore(s => s.setDebugSnap);
+  const snapThreshold = useBuilderStore(s => s.snapThreshold);
+  const snapLockAcquire = useBuilderStore(s => s.snapLockAcquire);
+  const snapLockRelease = useBuilderStore(s => s.snapLockRelease);
 
-  const [ghostMesh, setGhostMesh] = useState<THREE.Mesh | null>(null);
-  const transformRef = useRef<any>(null);
-  const visibleMeshRef = useRef<THREE.Mesh>(null);
-  const [snappedPos, setSnappedPos] = useState<[number, number, number] | null>(null);
-  const [snappedJoint, setSnappedJoint] = useState<{ otherPieceId: string, position: [number, number, number], normal: [number, number, number] } | null>(null);
-  const [alignSnapOffset, setAlignSnapOffset] = useState<THREE.Vector3 | null>(null);
+  const [mesh, setMesh] = useState<THREE.Mesh | null>(null);
+  const meshRef = useRef<THREE.Mesh | null>(null);
+  if (mesh) meshRef.current = mesh;
+  const ghostPreviewRef = useRef<THREE.Mesh>(null!);
 
-  // Resize state — tracks live scale during drag
-  const [resizeScale, setResizeScale] = useState<number>(1);
-  const resizeScaleRef = useRef(1);
-  const resizeFixedEndRef = useRef<'start' | 'end'>('end');
+  const [isDragging, setIsDragging] = useState(false);
+  const draggingRef = useRef(false);
+  const dragStartRef = useRef(new THREE.Vector3());
+  const [ctrlHeld, setCtrlHeld] = useState(false);
+  const snapLockRef = useRef<{ targetId: string; targetPos: THREE.Vector3; targetNorm: THREE.Vector3 } | null>(null);
+  interface SnapInfo {
+    type: 'butt' | 'tee' | 'corner';
+    otherId: string;
+    offset: THREE.Vector3;
+    position: [number, number, number];  // target face centre
+    normal: [number, number, number];    // target face normal
+    ghostNormal: [number, number, number]; // moving piece's face normal at snap
+  }
+  const [nearSnap, setNearSnap] = useState<SnapInfo | null>(null);
 
-  const measurePending = useBuilderStore(state => state._dimensionPending);
-  const jointPending = useBuilderStore(state => state._jointToolPending);
-  const isPendingTarget = (measurePending?.pieceId === id) || (jointPending?.pieceId === id);
-
-  const lastValidPos = useRef(new THREE.Vector3());
-  const lastValidRot = useRef(new THREE.Euler());
-  const wasSnapped = useRef(false);
-  const prevNormalGap = useRef(Infinity);
-  const minSnapGap = useRef(Infinity);
-  const geoCache = useRef<THREE.BoxGeometry | null>(null);
-  // Snapshot refs — always up-to-date for mouseUp handler (avoids stale closures)
-  const snapPosRef = useRef<[number, number, number] | null>(null);
-  const snapJointRef = useRef<{ otherPieceId: string; position: [number, number, number]; normal: [number, number, number] } | null>(null);
-
-  // ---- Guard: return null if piece/lumber not found (after all hooks) ----
   if (!piece) return null;
   const lumber = getLumberById(piece.lumberId);
   if (!lumber) return null;
-
   const isSelected = selectedPieceId === id;
-
-  // Geometry reuse
   const args: [number, number, number] = [lumber.actualWidth, lumber.actualDepth, piece.length];
-  if (geoCache.current) {
-    if (geoCache.current.parameters.width !== args[0] || geoCache.current.parameters.height !== args[1] || geoCache.current.parameters.depth !== args[2]) {
-      geoCache.current.dispose();
-      geoCache.current = new THREE.BoxGeometry(...args);
+
+  // ---- Face-centre helper (no cache — always fresh) ----
+  function getFaces(p: [number, number, number], r: [number, number, number], w: number, d: number, l: number) {
+    const o = new THREE.Object3D(); o.position.set(...p); o.rotation.set(...r); o.updateMatrixWorld();
+    const m = o.matrixWorld, nm = new THREE.Matrix3().getNormalMatrix(m);
+    const hw = w / 2, hd = d / 2, hl = l / 2;
+    const raw: [number, number, number, number, number, number][] = [
+      [hw,0,0,1,0,0],[-hw,0,0,-1,0,0],[0,hd,0,0,1,0],[0,-hd,0,0,-1,0],[0,0,hl,0,0,1],[0,0,-hl,0,0,-1],
+    ];
+    return raw.map(([px,py,pz,nx,ny,nz]) => ({
+      p: new THREE.Vector3(px,py,pz).applyMatrix4(m),
+      n: new THREE.Vector3(nx,ny,nz).applyMatrix3(nm).normalize(),
+    }));
+  }
+
+  // ---- Compute snap (butt, T, or corner) ----
+  function findSnap(pos: [number, number, number], rot: [number, number, number]) {
+    const myF = getFaces(pos, rot, lumber.actualWidth, lumber.actualDepth, piece.length);
+    let best = Infinity, bestData: typeof nearSnap = null;
+
+    const freshPieces = Object.values(useBuilderStore.getState().parts);
+    if (showDebug && freshPieces.some(p => p.id === id)) {
+      // Verify current piece is in the list but skipped
     }
-  } else {
-    geoCache.current = new THREE.BoxGeometry(...args);
-  }
-  const boxGeom = geoCache.current;
+    for (const o of freshPieces) {
+      if (o.id === id) continue;
+      const l = getLumberById(o.lumberId); if (!l) continue;
+      const oF = getFaces(o.position, o.rotation, l.actualWidth, l.actualDepth, o.length);
 
-  // Sync last valid positions on mount
-  if (lastValidPos.current.lengthSq() === 0) {
-    lastValidPos.current.set(...piece.position);
-    lastValidRot.current.set(...piece.rotation);
-  }
+      for (const mf of myF) for (const oface of oF) {
+        const dot = mf.n.dot(oface.n);
 
-  // OBBs for collision detection
-  const allOtherOBBs = useMemo(() => {
-    return otherPieces.map(p => {
-      const l = getLumberById(p.lumberId);
-      if (!l) return null;
-      const obb = new OBB();
-      obb.halfSize.set(l.actualWidth / 2 - 0.1, l.actualDepth / 2 - 0.1, p.length / 2 - 0.1);
-      obb.center.set(...p.position);
-      const euler = new THREE.Euler(...p.rotation);
-      obb.rotation.setFromMatrix4(new THREE.Matrix4().makeRotationFromEuler(euler));
-      return obb;
-    }).filter(Boolean) as OBB[];
-  }, [otherPieces]);
-
-  const getOtherSnapPoints = useCallback((): { pieceId: string; point: THREE.Vector3; normal: THREE.Vector3; type: SnapPoint['type'] }[] => {
-    const allPieces = useBuilderStore.getState().pieces;
-    const others = allPieces.filter(p => p.id !== id);
-    const points: { pieceId: string; point: THREE.Vector3; normal: THREE.Vector3; type: SnapPoint['type'] }[] = [];
-    others.forEach(p => {
-      const l = getLumberById(p.lumberId);
-      if (l) {
-        const pts = getSnapPoints(p.position, p.rotation, l.actualWidth, l.actualDepth, p.length);
-        pts.forEach(pt => points.push({ pieceId: p.id, point: pt.point, normal: pt.normal, type: pt.type }));
-      }
-    });
-    return points;
-  }, [id]);
-
-  // useFrame: collision detection + position sync + resize scale
-  useFrame(() => {
-    if (!visibleMeshRef.current) return;
-
-    if (isSelected) {
-      if (transformMode === 'resize') {
-        // Resize mode: apply scale along local Z from the fixed end
-        const s = resizeScaleRef.current;
-        if (s !== 1 && ghostMesh && lumber) {
-          const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(
-            new THREE.Quaternion().setFromEuler(lastValidRot.current)
-          );
-          const fixedEnd = resizeFixedEndRef.current;
-          const zSign = fixedEnd === 'end' ? 1 : -1;
-
-          // Position: base + offset so fixed end stays put
-          const basePos = ghostMesh.position;
-          const offset = localZ.clone().multiplyScalar(piece.length * (s - 1) / 2 * zSign);
-
-          visibleMeshRef.current.position.copy(basePos).add(offset);
-          visibleMeshRef.current.rotation.copy(ghostMesh.rotation);
-          visibleMeshRef.current.scale.set(1, 1, s);
-        } else {
-          // Scale = 1: use store data directly (lastValidPos may be stale after updatePiece)
-          visibleMeshRef.current.position.set(...piece.position);
-          visibleMeshRef.current.rotation.set(...piece.rotation);
-          visibleMeshRef.current.scale.set(1, 1, 1);
-          // Sync lastValidPos so we're ready for translate/rotate
-          lastValidPos.current.set(...piece.position);
-          lastValidRot.current.set(...piece.rotation);
-        }
-      } else if (ghostMesh && lumber) {
-        // Translate/rotate mode: collision + snap
-        const targetPos = snappedPos ? new THREE.Vector3(...snappedPos) : ghostMesh.position;
-        const targetRot = ghostMesh.rotation;
-
-        // When snap is active, skip collision — the snap ensures valid placement.
-        // Collision would block face-to-face snap since OBBs overlap at contact.
-        if (!snappedPos) {
-          const ghostOBB = new OBB();
-          ghostOBB.halfSize.set(lumber.actualWidth / 2 - 2, lumber.actualDepth / 2 - 2, piece.length / 2 - 2);
-          ghostOBB.center.copy(targetPos);
-          ghostOBB.rotation.setFromMatrix4(new THREE.Matrix4().makeRotationFromEuler(targetRot));
-          const isColliding = allOtherOBBs.some(obb => obb.intersectsOBB(ghostOBB, Number.EPSILON));
-          if (!isColliding) {
-            lastValidPos.current.copy(targetPos);
-            lastValidRot.current.copy(targetRot);
+        // --- Butt joint: opposing faces (dot ≈ -1) ---
+        if (dot < -0.9) {
+          const d = oface.p.clone().sub(mf.p);
+          const nd = Math.abs(d.dot(mf.n));
+          if (nd < best) {
+            best = nd;
+            bestData = {
+              type: 'butt', otherId: o.id,
+              offset: mf.n.clone().multiplyScalar(d.dot(mf.n)),
+              position: [oface.p.x, oface.p.y, oface.p.z] as [number, number, number],
+              normal: [oface.n.x, oface.n.y, oface.n.z] as [number, number, number],
+              ghostNormal: [mf.n.x, mf.n.y, mf.n.z] as [number, number, number],
+            };
           }
-        } else {
-          lastValidPos.current.copy(targetPos);
-          lastValidRot.current.copy(targetRot);
         }
-        visibleMeshRef.current.position.copy(lastValidPos.current);
-        visibleMeshRef.current.rotation.copy(lastValidRot.current);
-        visibleMeshRef.current.scale.set(1, 1, 1);
-      } else {
-        // Non-resize, no ghost: sync from store (handles deselection after resize)
-        visibleMeshRef.current.position.set(...piece.position);
-        visibleMeshRef.current.rotation.set(...piece.rotation);
-        visibleMeshRef.current.scale.set(1, 1, 1);
-        lastValidPos.current.set(...piece.position);
-        lastValidRot.current.set(...piece.rotation);
+
+        // --- T-joint / Corner joint: perpendicular faces (dot ≈ 0) ---
+        if (Math.abs(dot) < 0.15) {
+          const d = oface.p.clone().sub(mf.p);
+          const dist = d.length();
+          if (dist < best) {
+            best = dist;
+            bestData = {
+              type: Math.abs(dot) < 0.1 ? 'tee' : 'corner',
+              otherId: o.id,
+              offset: d.clone(),
+              position: [oface.p.x, oface.p.y, oface.p.z] as [number, number, number],
+              normal: [oface.n.x, oface.n.y, oface.n.z] as [number, number, number],
+              ghostNormal: [mf.n.x, mf.n.y, mf.n.z] as [number, number, number],
+            };
+          }
+        }
+      }
+    }
+    if (best < snapThreshold && bestData) {
+      if (showDebug) {
+        console.log(`[SNAP] ${bestData.type} id=${bestData.otherId.slice(0,6)} dist=${best.toFixed(1)}mm  offset=(${bestData.offset.x.toFixed(0)},${bestData.offset.y.toFixed(0)},${bestData.offset.z.toFixed(0)})`);
+        // Find the matching ghost face for the debug overlay
+        const myF2 = getFaces(pos, rot, lumber.actualWidth, lumber.actualDepth, piece.length);
+        for (const mf of myF2) for (const o of freshPieces) {
+          if (o.id === bestData.otherId) {
+            const l = getLumberById(o.lumberId); if (!l) continue;
+            for (const oface of getFaces(o.position, o.rotation, l.actualWidth, l.actualDepth, o.length)) {
+              if (mf.n.dot(oface.n) < -0.9 || Math.abs(mf.n.dot(oface.n)) < 0.15) {
+                const d = oface.p.clone().sub(mf.p);
+                const nd = Math.abs(d.dot(mf.n));
+                if (Math.abs(nd - best) < 1) {
+                  setDebugSnap({ ghostFace: [mf.p.x, mf.p.y, mf.p.z], targetFace: [oface.p.x, oface.p.y, oface.p.z], distance: best, type: bestData.type });
+                }
+              }
+            }
+          }
+        }
+      }
+      return bestData;
+    }
+    if (showDebug) setDebugSnap(null);
+    return null;
+  }
+
+  // ---- Fastener pattern logic based on face width ----
+  function fastenerPattern(faceWidth: number) {
+    if (faceWidth < 50)  return { count: 1, spacing: 0, offset: 0 };           // single
+    if (faceWidth <= 150) return { count: 2, spacing: faceWidth * 0.5, offset: -faceWidth * 0.25 }; // dual at ¼ and ¾
+    const n = Math.max(3, Math.floor(faceWidth / 100));
+    const sp = faceWidth / (n + 1);
+    return { count: n, spacing: sp, offset: -(n - 1) * sp / 2 };              // multi every 100mm
+  }
+
+  // ---- Dragging ----
+  const onDragStart = useCallback(() => {
+    setIsDragging(true); draggingRef.current = true;
+    setNearSnap(null);
+    snapLockRef.current = null;
+    if (meshRef.current) dragStartRef.current.copy(meshRef.current.position);
+  }, []);
+
+  const onDragEnd = useCallback(() => {
+    setIsDragging(false); draggingRef.current = false;
+    const m = meshRef.current; if (!m) return;
+    const p: [number, number, number] = [m.position.x, m.position.y, m.position.z];
+    const r: [number, number, number] = [m.rotation.x, m.rotation.y, m.rotation.z];
+    const snap = ctrlHeld ? null : findSnap(p, r);
+    setNearSnap(null);
+
+    if (snap) {
+      // Require minimum drag distance to prevent accidental joints
+      const dragDist = dragStartRef.current.distanceTo(new THREE.Vector3(p[0], p[1], p[2]));
+      if (dragDist < 50) { updatePiece(id, { position: p, rotation: r }); return; }
+
+      if (showDebug) console.log(`[SNAP-END] type=${snap.type} target=${snap.otherId.slice(0,6)}`);
+
+      // --- Surface-to-surface positioning ---
+      // finalPos = targetFaceCentre + targetNormal * (movingPieceThickness / 2)
+      const targetFC = new THREE.Vector3(...snap.position);
+      const targetN = new THREE.Vector3(...snap.normal).normalize();
+
+      // Compute moving piece thickness along the snap direction
+      const movingN = new THREE.Vector3(...snap.ghostNormal).normalize();
+      const movingThick = thick(piece, movingN);
+
+      // Lock rotation: align ghost normal opposite to target normal
+      let finalRot = r;
+      if (snap.type === 'butt') {
+        const q = new THREE.Quaternion().setFromUnitVectors(movingN, targetN.clone().negate());
+        const curQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...r));
+        curQ.premultiply(q);
+        const e = new THREE.Euler().setFromQuaternion(curQ);
+        finalRot = [e.x, e.y, e.z] as [number, number, number];
+      }
+
+      // Axis-locked snap: only change the NORMAL component of position.
+      // Tangential position stays at the user's drag position.
+      // fullSnapPos = targetFC + targetN * (thickness/2)  (full 3D)
+      // snappedPos = dragPos + (fullSnapComponent - dragComponent) * targetN
+      const dragPos = new THREE.Vector3(p[0], p[1], p[2]);
+      const dragComp = dragPos.dot(targetN);
+      const fullSnapComp = targetFC.dot(targetN) + movingThick / 2;
+      const snapped: [number, number, number] = [
+        p[0] + targetN.x * (fullSnapComp - dragComp),
+        p[1] + targetN.y * (fullSnapComp - dragComp),
+        p[2] + targetN.z * (fullSnapComp - dragComp),
+      ];
+
+      if (showDebug) console.log(`[SNAP] finalPos=(${snapped.map(v=>v.toFixed(0)).join(',')})  ...`);
+
+      // Collision check: reject if snapped position overlaps any other piece (except target)
+      const collide = (() => {
+        const hw = lumber.actualWidth / 2, hd = lumber.actualDepth / 2, hl = piece.length / 2;
+        const min = [snapped[0]-hw, snapped[1]-hd, snapped[2]-hl];
+        const max = [snapped[0]+hw, snapped[1]+hd, snapped[2]+hl];
+        for (const o of Object.values(useBuilderStore.getState().parts)) {
+          if (o.id === id || o.id === snap.otherId) continue;
+          const p = o.position;
+          if (p[0] >= min[0] && p[0] <= max[0] && p[1] >= min[1] && p[1] <= max[1] && p[2] >= min[2] && p[2] <= max[2]) return true;
+        }
+        return false;
+      })();
+      if (collide) { updatePiece(id, { position: p, rotation: r }); if (showDebug) console.log('[SNAP] REJECTED — collision'); return; }
+
+      updatePiece(id, { position: snapped, rotation: finalRot });
+
+      // Create joint
+      const st = useBuilderStore.getState();
+      const p1 = st.parts[id]!;
+      const p2 = st.parts[snap.otherId];
+      if (p1 && p2) {
+        const t1 = thick(p1, targetN);
+        const t2 = thick(p2, targetN.clone().negate());
+        const p2l = getLumberById(p2.lumberId);
+        const fw = snap.type === 'butt'
+          ? Math.min(lumber.actualWidth, p2l?.actualWidth || 90)
+          : lumber.actualWidth;
+        const pat = fastenerPattern(fw);
+        addJoint({
+          type: 'butt', dirty: false,
+          piece1Id: id, piece2Id: snap.otherId,
+          position: snap.position, normal: snap.normal,
+          fixingType: 'Screws (Wood)', fixingCount: pat.count,
+          fixingSpacing: pat.spacing, fixingOffset: pat.offset,
+          fixingLength: Math.round(t1 + t2 * 0.75), fixingEmbedPercent: 75,
+        });
       }
     } else {
-      // Not selected — sync from store (handles deselection after resize)
-      visibleMeshRef.current.position.set(...piece.position);
-      visibleMeshRef.current.rotation.set(...piece.rotation);
-      visibleMeshRef.current.scale.set(1, 1, 1);
-      lastValidPos.current.set(...piece.position);
-      lastValidRot.current.set(...piece.rotation);
+      updatePiece(id, { position: p, rotation: r });
+    }
+  }, [id, updatePiece, addJoint, piece, allPieces, lumber, ctrlHeld, showDebug]);
+
+  // ---- useFrame: proximity check + snap lock ----
+  useFrame(() => {
+    if (!draggingRef.current || !meshRef.current) { setNearSnap(null); return; }
+    const mp = meshRef.current.position;
+
+    // Snap lock: if locked and still within 10mm of target, keep locked
+    if (snapLockRef.current) {
+      const d = mp.distanceTo(snapLockRef.current.targetPos);
+      if (d > snapLockRelease) snapLockRef.current = null;
+      else { setNearSnap(null); return; } // still locked, no new detection
+    }
+
+    const p: [number, number, number] = [mp.x, mp.y, mp.z];
+    const r: [number, number, number] = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
+    const snap = ctrlHeld ? null : findSnap(p, r);
+    setNearSnap(snap);
+
+    // Update ghost preview position (ref-based, follows drag)
+    if (snap && !ctrlHeld && ghostPreviewRef.current) {
+      const targetFC = new THREE.Vector3(...snap.position);
+      const targetN = new THREE.Vector3(...snap.normal).normalize();
+      const movingN = new THREE.Vector3(...snap.ghostNormal).normalize();
+      const movingThick = thick({ lumberId: piece.lumberId, rotation: piece.rotation, length: piece.length }, movingN);
+
+      // Axis-locked position
+      const dragComp = mp.dot(targetN);
+      const fullSnapComp = targetFC.dot(targetN) + movingThick / 2;
+      ghostPreviewRef.current.position.set(
+        mp.x + targetN.x * (fullSnapComp - dragComp),
+        mp.y + targetN.y * (fullSnapComp - dragComp),
+        mp.z + targetN.z * (fullSnapComp - dragComp),
+      );
+
+      // Normal-lock rotation from current drag rotation
+      if (snap.type === 'butt') {
+        const q = new THREE.Quaternion().setFromUnitVectors(movingN, targetN.clone().negate());
+        const cr = meshRef.current?.rotation;
+        if (cr) {
+          const cq = new THREE.Quaternion().setFromEuler(cr);
+          cq.premultiply(q);
+          ghostPreviewRef.current.rotation.setFromQuaternion(cq);
+        }
+      }
+      ghostPreviewRef.current.visible = true;
+    } else if (ghostPreviewRef.current) {
+      ghostPreviewRef.current.visible = false;
+    }
+
+    // Acquire snap lock when within 5mm of target face centre
+    if (snap && snap.offset) {
+      const ghostFace = new THREE.Vector3(p[0]+snap.offset.x, p[1]+snap.offset.y, p[2]+snap.offset.z);
+      const d = ghostFace.distanceTo(new THREE.Vector3(...snap.position));
+      if (d < snapLockAcquire) {
+        snapLockRef.current = {
+          targetId: snap.otherId,
+          targetPos: new THREE.Vector3(...snap.position),
+          targetNorm: new THREE.Vector3(...snap.normal),
+        };
+      }
     }
   });
 
-  const lastTanDist = useRef(Infinity);
+  // ---- Ctrl key tracking ----
+  const keyHandler = useCallback((e: KeyboardEvent) => setCtrlHeld(e.ctrlKey), []);
+  const keyUpHandler = useCallback((e: KeyboardEvent) => { if (!e.ctrlKey) setCtrlHeld(false); }, []);
+  React.useEffect(() => {
+    window.addEventListener('keydown', keyHandler);
+    window.addEventListener('keyup', keyUpHandler);
+    return () => { window.removeEventListener('keydown', keyHandler); window.removeEventListener('keyup', keyUpHandler); };
+  }, [keyHandler, keyUpHandler]);
 
-  /** Core snap computation — updates refs + state synchronously */
-  const computeSnap = useCallback(() => {
-    if (!ghostMesh) return;
+  const onClick = useCallback((e: any) => { e.stopPropagation(); selectPiece(id); }, [id, selectPiece]);
 
-    const ghostPos = ghostMesh.position;
-    const ghostRot = ghostMesh.rotation;
-    const ghostPts = getSnapPoints(
-      [ghostPos.x, ghostPos.y, ghostPos.z],
-      [ghostRot.x, ghostRot.y, ghostRot.z],
-      lumber.actualWidth, lumber.actualDepth, piece.length
-    );
+  // ---- Port nodes — computed fresh each render from store position ----
+  // Uses inline computation to avoid any getFaces caching issues.
+  // This ensures port nodes always match the actual mesh position.
+  function getPorts() {
+    const o = new THREE.Object3D();
+    o.position.set(...piece.position); o.rotation.set(...piece.rotation); o.updateMatrixWorld();
+    const m = o.matrixWorld;
+    const hw = lumber.actualWidth / 2, hd = lumber.actualDepth / 2, hl = piece.length / 2;
+    const pts: [number, number, number][] = [
+      [hw,0,0],[-hw,0,0],[0,hd,0],[0,-hd,0],[0,0,hl],[0,0,-hl],
+    ];
+    return pts.map(([px,py,pz]) => new THREE.Vector3(px,py,pz).applyMatrix4(m));
+  }
+  const portPositions = getPorts();
 
-    // ---- PASS 1: Face-to-face snap (opposing normals) ----
-    let bestDist = Infinity;
-    let bestOffset = new THREE.Vector3();
-    let bestOtherId: string | null = null;
-    let bestOtherNormal: THREE.Vector3 | null = null;
-    let bestFaceCenter: THREE.Vector3 | null = null;
-    let bestFaceNormal: THREE.Vector3 | null = null;
-    let bestTanDist = Infinity;
+  // ---- Ghost preview — updated every frame in useFrame ----
+  // Ref-based so it tracks drag position without re-renders
 
-    const freshOtherPts = getOtherSnapPoints();
-    ghostPts.forEach(gPt => {
-      freshOtherPts.forEach(oPt => {
-        const dot = gPt.normal.dot(oPt.normal);
-        if (dot < -0.9 && gPt.type === 'face' && oPt.type === 'face') {
-          const delta = oPt.point.clone().sub(gPt.point);
-          const normal = gPt.normal.clone().normalize();
-          const normalDist = Math.abs(delta.dot(normal));
-          if (normalDist < bestDist) {
-            bestDist = normalDist;
-            const signedNormalDist = delta.dot(normal);
-            const normalOnly = normal.clone().multiplyScalar(signedNormalDist);
-            bestOffset = normalOnly;
-            const tanDelta = delta.clone().sub(normalOnly);
-            bestTanDist = tanDelta.length();
-            bestOtherId = oPt.pieceId;
-            bestOtherNormal = oPt.normal;
-            bestFaceCenter = oPt.point;
-            bestFaceNormal = oPt.normal;
-          }
-        }
-      });
-    });
-
-    let faceSnap = false;
-    if (wasSnapped.current) {
-      // Already snapped: use RELEASE threshold, NO pull-away tracking
-      // This lets the user slide along a face without the snap disengaging
-      // due to tiny normal-direction fluctuations from TransformControls.
-      faceSnap = !!(bestDist < SNAP_RELEASE && bestOtherId && bestOtherNormal);
-      if (!faceSnap && bestDist > SNAP_RELEASE + 10) {
-        wasSnapped.current = false;
-        minSnapGap.current = Infinity;
-      }
-    } else {
-      // Not snapped: use ENGAGE threshold with pull-away hysteresis
-      if (bestDist < minSnapGap.current) minSnapGap.current = bestDist;
-      const pullingAway = bestDist > minSnapGap.current + 3;
-      faceSnap = !!(bestDist < SNAP_ENGAGE && bestOtherId && bestOtherNormal && !pullingAway);
-      if (pullingAway && bestDist > SNAP_RELEASE) {
-        wasSnapped.current = false;
-        minSnapGap.current = Infinity;
-      }
-    }
-    prevNormalGap.current = bestDist;
-
-    // ---- PASS 2: Alignment/end-to-end snap ----
-    let alignTanDist = Infinity;
-    let alignTanOffset: THREE.Vector3 | null = null;
-
-    ghostPts.forEach(gPt => {
-      freshOtherPts.forEach(oPt => {
-        const dot = gPt.normal.dot(oPt.normal);
-        if (Math.abs(dot) > 0.9 && (gPt.type === 'face' || gPt.type === 'edge' || gPt.type === 'corner') && (oPt.type === 'face' || oPt.type === 'edge' || oPt.type === 'corner')) {
-          const delta = oPt.point.clone().sub(gPt.point);
-          const normal = gPt.normal.clone().normalize();
-          const normalComp = delta.dot(normal);
-          const tanDelta = delta.clone().sub(normal.clone().multiplyScalar(normalComp));
-          const tanDist = tanDelta.length();
-          if (tanDist < ALIGN_ENGAGE && tanDist < alignTanDist) {
-            alignTanDist = tanDist;
-            alignTanOffset = tanDelta;
-          }
-        }
-      });
-    });
-
-    // ---- PASS 3: Perpendicular face snap (end-to-face) ----
-    // E.g. end of one piece meets the face of another (|dot| ≈ 0)
-    let perpBestDist = Infinity;
-    let perpOffset: THREE.Vector3 | null = null;
-    let perpOtherId: string | null = null;
-    let perpFaceCenter: THREE.Vector3 | null = null;
-    let perpFaceNormal: THREE.Vector3 | null = null;
-
-    ghostPts.forEach(gPt => {
-      freshOtherPts.forEach(oPt => {
-        const dot = gPt.normal.dot(oPt.normal);
-        if (Math.abs(dot) < 0.15 && gPt.type === 'face' && oPt.type === 'face') {
-          const delta = oPt.point.clone().sub(gPt.point);
-          const dist = delta.length();
-          if (dist < SNAP_ENGAGE && dist < perpBestDist) {
-            perpBestDist = dist;
-            perpOffset = delta;
-            perpOtherId = oPt.pieceId;
-            perpFaceCenter = oPt.point;
-            perpFaceNormal = oPt.normal;
-          }
-        }
-      });
-    });
-
-    // ---- Apply best snap & update refs + state ----
-    let newSnappedPos: [number, number, number] | null = null;
-    let newJointData: typeof snapJointRef.current = null;
-    let newAlignOffset: THREE.Vector3 | null = null;
-
-    if (faceSnap && alignTanOffset) {
-      if (!wasSnapped.current) minSnapGap.current = Infinity;
-      wasSnapped.current = true;
-      lastTanDist.current = bestTanDist;
-      const combined = bestOffset.clone().add(alignTanOffset);
-      newSnappedPos = [ghostPos.x + combined.x, ghostPos.y + combined.y, ghostPos.z + combined.z];
-      newJointData = {
-        otherPieceId: bestOtherId!,
-        position: [bestFaceCenter!.x, bestFaceCenter!.y, bestFaceCenter!.z] as [number, number, number],
-        normal: [bestFaceNormal!.x, bestFaceNormal!.y, bestFaceNormal!.z] as [number, number, number],
-      };
-    } else if (faceSnap) {
-      if (!wasSnapped.current) minSnapGap.current = Infinity;
-      wasSnapped.current = true;
-      lastTanDist.current = bestTanDist;
-      newSnappedPos = [ghostPos.x + bestOffset.x, ghostPos.y + bestOffset.y, ghostPos.z + bestOffset.z];
-      newJointData = {
-        otherPieceId: bestOtherId!,
-        position: [bestFaceCenter!.x, bestFaceCenter!.y, bestFaceCenter!.z] as [number, number, number],
-        normal: [bestFaceNormal!.x, bestFaceNormal!.y, bestFaceNormal!.z] as [number, number, number],
-      };
-    } else if (perpOffset && perpOtherId && perpFaceCenter && perpFaceNormal) {
-      // Perpendicular (end-to-face) snap — also create joint
-      wasSnapped.current = true;
-      lastTanDist.current = 0; // zero tan distance = create joint
-      newSnappedPos = [ghostPos.x + perpOffset.x, ghostPos.y + perpOffset.y, ghostPos.z + perpOffset.z];
-      newJointData = {
-        otherPieceId: perpOtherId,
-        position: [perpFaceCenter.x, perpFaceCenter.y, perpFaceCenter.z] as [number, number, number],
-        normal: [perpFaceNormal.x, perpFaceNormal.y, perpFaceNormal.z] as [number, number, number],
-      };
-    } else if (alignTanOffset) {
-      wasSnapped.current = true;
-      newSnappedPos = [ghostPos.x + alignTanOffset.x, ghostPos.y + alignTanOffset.y, ghostPos.z + alignTanOffset.z];
-      newAlignOffset = alignTanOffset;
-    } else {
-      wasSnapped.current = false;
-    }
-
-    // Update refs synchronously (always latest for onMouseUp)
-    snapPosRef.current = newSnappedPos;
-    snapJointRef.current = newJointData;
-
-    // Update state (for visual feedback, may lag by one frame)
-    setSnappedPos(newSnappedPos);
-    setSnappedJoint(newJointData);
-    setAlignSnapOffset(newAlignOffset);
-  }, [ghostMesh, getOtherSnapPoints, lastTanDist, lumber, piece.length]);
-
-  const handleTransformChange = useCallback(() => {
-    computeSnap();
-  }, [computeSnap]);
-
-  const handleMouseUp = useCallback(() => {
-    if (ghostMesh) {
-      // ghostMesh is driven by TransformControls and may be at a RAW position
-      // while the visible mesh is at the SNAPPED position (lastValidPos).
-      // Temporarily reposition ghostMesh to the actual visible position for snap detection.
-      const savedPos = ghostMesh.position.clone();
-      const savedRot = ghostMesh.rotation.clone();
-      ghostMesh.position.copy(lastValidPos.current);
-      ghostMesh.rotation.copy(lastValidRot.current);
-      computeSnap();
-      ghostMesh.position.copy(savedPos);
-      ghostMesh.rotation.copy(savedRot);
-
-      const finalSnapPos = snapPosRef.current;
-      const finalSnapJoint = snapJointRef.current;
-
-      const newPos: [number, number, number] = [lastValidPos.current.x, lastValidPos.current.y, lastValidPos.current.z];
-      const newRot: [number, number, number] = [lastValidRot.current.x, lastValidRot.current.y, lastValidRot.current.z];
-      updatePiece(id, { position: newPos, rotation: newRot });
-
-      if (finalSnapPos && finalSnapJoint && lastTanDist.current < JOINT_TAN_THRESHOLD) {
-        const state = useBuilderStore.getState();
-        const p1 = state.pieces.find(p => p.id === id)!;
-        const otherPiece = state.pieces.find(p => p.id === finalSnapJoint.otherPieceId);
-        if (p1 && otherPiece) {
-          const jointNorm = new THREE.Vector3(...finalSnapJoint.normal);
-          const t1 = pieceThicknessAlong(p1, jointNorm);
-          const t2 = pieceThicknessAlong(otherPiece, jointNorm.clone().negate());
-          const fixLen = t1 + Math.round(t2 * 0.67);
-          addJoint({
-            piece1Id: id,
-            piece2Id: finalSnapJoint.otherPieceId,
-            position: finalSnapJoint.position,
-            normal: finalSnapJoint.normal,
-            fixingType: 'Screws (Wood)',
-            fixingCount: 4,
-            fixingSpacing: 50,
-            fixingLength: fixLen,
-            fixingEmbedPercent: 67,
-          });
-        }
-      }
-
-      ghostMesh.position.copy(lastValidPos.current);
-      ghostMesh.rotation.copy(lastValidRot.current);
-
-      snapPosRef.current = null;
-      snapJointRef.current = null;
-      setSnappedPos(null);
-      setSnappedJoint(null);
-    }
-  }, [ghostMesh, id, addJoint, updatePiece, computeSnap]);
-
-  const onPointerDownMiss = useCallback((e: any) => {
-    e.stopPropagation();
-
-    // Check for measure mode using fresh store state
-    const state = useBuilderStore.getState();
-    if (state.measureMode) {
-      const pending = state._dimensionPending;
-      const vertexPos = snapToVertex(id, [e.point.x, e.point.y, e.point.z], state.pieces);
-      if (pending && pending.pieceId !== id) {
-        const p1 = state.pieces.find(p => p.id === pending.pieceId);
-        const p2 = state.pieces.find(p => p.id === id);
-        if (p1 && p2) {
-          const v1 = snapToVertex(pending.pieceId, pending.position, state.pieces);
-          const mid: [number, number, number] = [
-            (v1[0] + vertexPos[0]) / 2,
-            (v1[1] + vertexPos[1]) / 2,
-            (v1[2] + vertexPos[2]) / 2,
-          ];
-          const distance = Math.round(
-            Math.sqrt(
-              (v1[0] - vertexPos[0]) ** 2 +
-              (v1[1] - vertexPos[1]) ** 2 +
-              (v1[2] - vertexPos[2]) ** 2
-            )
-          );
-          const labelOffset: [number, number, number] = [0, 100, 0];
-          state.addDimension(pending.pieceId, id, distance, labelOffset);
-        }
-      } else if (!pending) {
-        useBuilderStore.setState({ _dimensionPending: { pieceId: id, position: vertexPos } });
-      }
-      return;
-    }
-
-    // Joint tool mode
-    if (state.jointToolMode) {
-      const pending = state._jointToolPending;
-      const clickPoint: [number, number, number] = [e.point.x, e.point.y, e.point.z];
-      const clickNormal: [number, number, number] = [e.faceNormal?.x || 0, e.faceNormal?.y || 1, e.faceNormal?.z || 0];
-
-      if (pending && pending.pieceId !== id) {
-        // Second piece clicked — create joint between pending piece and this one
-        const p1 = state.pieces.find(p => p.id === pending.pieceId);
-        const p2 = state.pieces.find(p => p.id === id);
-        if (p1 && p2) {
-          const jNorm = new THREE.Vector3(...clickNormal).normalize();
-          const t1 = pieceThicknessAlong(p1, jNorm);
-          const t2 = pieceThicknessAlong(p2, jNorm.clone().negate());
-          const fixLen = t1 + Math.round(t2 * 0.67);
-          state.addJoint({
-            piece1Id: pending.pieceId,
-            piece2Id: id,
-            position: clickPoint,
-            normal: clickNormal,
-            fixingType: 'Screws (Wood)',
-            fixingCount: 4,
-            fixingSpacing: 50,
-            fixingLength: fixLen,
-            fixingEmbedPercent: 67,
-          });
-        }
-        useBuilderStore.setState({ _jointToolPending: null });
-      } else if (!pending) {
-        // First piece clicked — store as pending
-        useBuilderStore.setState({ _jointToolPending: { pieceId: id, position: clickPoint, normal: clickNormal } });
-      }
-      return;
-    }
-
-    selectPiece(id);
-  }, [id, selectPiece]);
-
-  // Whether to show a scale visual during resize
-  const showResizeScale = isSelected && transformMode === 'resize' && resizeScale !== 1;
+  const edgeColor = nearSnap ? '#4ade80' : isDragging ? '#60a5fa' : isSelected ? '#ffffff' : '#8c6b4a';
 
   return (
     <group>
-      {isSelected && (
-        <>
-          {ghostMesh && transformMode !== 'resize' && (
-            <TransformControls
-              ref={transformRef}
-              object={ghostMesh}
-              mode={transformMode === 'rotate' ? 'rotate' : 'translate'}
-              space="world"
-              size={1.5}
-              rotationSnap={Math.PI / 4}
-              onChange={handleTransformChange}
-              onMouseUp={handleMouseUp}
-            />
-          )}
-          <mesh
-            ref={setGhostMesh}
-            position={piece.position}
-            rotation={piece.rotation}
-            visible={false}
-          >
-            <boxGeometry args={args} />
-          </mesh>
-        </>
+      {isSelected && transformMode !== 'resize' && (
+        <TransformControls
+          object={mesh}
+          mode={transformMode === 'rotate' ? 'rotate' : 'translate'}
+          space="world" size={1.5} rotationSnap={Math.PI / 4}
+          onMouseDown={onDragStart}
+          onMouseUp={onDragEnd}
+        />
       )}
 
-      {/* Visible mesh — scale is set in useFrame during resize */}
+      {/* Main mesh */}
       <mesh
-        ref={visibleMeshRef}
-        position={piece.position}
-        rotation={piece.rotation}
-        onClick={onPointerDownMiss}
-        castShadow
-        receiveShadow
+        ref={setMesh}
+        position={piece.position} rotation={piece.rotation}
+        onClick={onClick} castShadow receiveShadow
       >
-        <primitive object={boxGeom} attach="geometry" />
-        <meshStandardMaterial 
-          color={piece.color || "#d4a373"} 
-          roughness={0.8}
-          metalness={0.1}
-          emissive={isPendingTarget ? (jointPending ? "#22c55e" : "#3b82f6") : isSelected ? "#444" : "#000"}
-          emissiveIntensity={isPendingTarget ? 0.35 : isSelected ? 0.2 : 0}
+        <boxGeometry args={args} />
+        <meshStandardMaterial
+          color={piece.color || '#d4a373'} roughness={0.8} metalness={0.1}
+          emissive={nearSnap ? '#226622' : isSelected ? '#444' : '#000'}
+          emissiveIntensity={nearSnap ? 0.35 : isSelected ? 0.2 : 0}
         />
         <lineSegments>
-          <edgesGeometry args={[boxGeom]} />
-          <lineBasicMaterial color={isPendingTarget ? (jointPending ? "#22c55e" : "#3b82f6") : isSelected ? (snappedJoint ? "#4ade80" : alignSnapOffset ? "#60a5fa" : "#ffffff") : "#8c6b4a"} />
+          <edgesGeometry args={[new THREE.BoxGeometry(...args)]} />
+          <lineBasicMaterial color={edgeColor} />
         </lineSegments>
       </mesh>
 
+      {/* Ghost preview — positioned/visibility toggled in useFrame */}
+      <mesh ref={ghostPreviewRef} visible={false}>
+        <boxGeometry args={args} />
+        <meshStandardMaterial color="#4ade80" transparent opacity={0.25} depthWrite={false} />
+      </mesh>
+
+      {/* Port nodes on selected piece */}
+      {isSelected && portPositions.map((fp, i) => (
+        <mesh key={i} position={fp}>
+          <sphereGeometry args={[4, 8, 8]} />
+          <meshBasicMaterial
+            color={nearSnap?.type === 'butt' ? '#4ade80' : nearSnap ? '#fbbf24' : '#3b82f6'}
+            transparent opacity={0.7}
+          />
+        </mesh>
+      ))}
+
+      {/* Ctrl indicator */}
+      {isSelected && ctrlHeld && (
+        <mesh position={[piece.position[0], piece.position[1] + 120, piece.position[2]]}>
+          <boxGeometry args={[80, 16, 4]} />
+          <meshBasicMaterial color="#f59e0b" transparent opacity={0.6} />
+        </mesh>
+      )}
+
       {isSelected && transformMode === 'resize' && (
         <group position={piece.position} rotation={piece.rotation}>
-          <ResizeHandle
-            piece={piece}
-            lumber={lumber}
-            side="end"
-            updatePiece={updatePiece}
-            resizeScaleRef={resizeScaleRef}
-            onScaleChange={setResizeScale}
-            fixedEndRef={resizeFixedEndRef}
-          />
-          <ResizeHandle
-            piece={piece}
-            lumber={lumber}
-            side="start"
-            updatePiece={updatePiece}
-            resizeScaleRef={resizeScaleRef}
-            onScaleChange={setResizeScale}
-            fixedEndRef={resizeFixedEndRef}
-          />
+          <ResizeHandle piece={piece} lumber={lumber} side="end" updatePiece={updatePiece} />
+          <ResizeHandle piece={piece} lumber={lumber} side="start" updatePiece={updatePiece} />
         </group>
       )}
     </group>
   );
 }
 
-function ResizeHandle({ piece, lumber, side, updatePiece, resizeScaleRef, onScaleChange, fixedEndRef }: {
-  piece: ScenePiece;
-  lumber: StandardLumber;
-  side: 'start' | 'end';
-  updatePiece: (id: string, updates: Partial<ScenePiece>) => void;
-  resizeScaleRef: React.MutableRefObject<number>;
-  onScaleChange: (s: number) => void;
-  fixedEndRef: React.MutableRefObject<'start' | 'end'>;
-}) {
+// ---- Helpers ----
+
+function thick(piece: { lumberId: string; rotation: [number, number, number]; length: number }, dir: THREE.Vector3): number {
+  const l = getLumberById(piece.lumberId); if (!l) return 38;
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
+  const lx = new THREE.Vector3(1,0,0).applyQuaternion(q), ly = new THREE.Vector3(0,1,0).applyQuaternion(q), lz = new THREE.Vector3(0,0,1).applyQuaternion(q);
+  const d = dir.clone().normalize();
+  const dx = Math.abs(d.dot(lx)), dy = Math.abs(d.dot(ly)), dz = Math.abs(d.dot(lz));
+  if (dx >= dy && dx >= dz) return l.actualWidth;
+  if (dy >= dx && dy >= dz) return l.actualDepth;
+  return piece.length;
+}
+
+// ---- ResizeHandle ----
+function ResizeHandle({ piece, lumber, side, updatePiece }: { piece: any; lumber: any; side: 'start' | 'end'; updatePiece: any }) {
   const { camera, raycaster, pointer } = useThree();
   const [dragging, setDragging] = useState(false);
-  const handleRef = useRef<THREE.Mesh>(null);
-  const startLenRef = useRef(piece.length);
-  const dragPlaneRef = useRef(new THREE.Plane());
-  const dragStartWorldRef = useRef(new THREE.Vector3());
-  const currentLenRef = useRef(piece.length);
-
-  const zSign = side === 'end' ? 1 : -1;
-
-  const onPointerDown = useCallback((e: any) => {
-    e.stopPropagation();
-    (e.target as any).setPointerCapture(e.pointerId);
-    startLenRef.current = piece.length;
-    currentLenRef.current = piece.length;
-    fixedEndRef.current = side;
-
-    const handleWorld = new THREE.Vector3();
-    if (handleRef.current) {
-      handleRef.current.getWorldPosition(handleWorld);
-    } else {
-      const pos = new THREE.Vector3(...piece.position);
-      const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
-      pos.add(new THREE.Vector3(0, 0, zSign * piece.length / 2).applyQuaternion(quat));
-      handleWorld.copy(pos);
-    }
-    dragStartWorldRef.current.copy(handleWorld);
-
-    const camDir = new THREE.Vector3();
-    camera.getWorldDirection(camDir);
-    dragPlaneRef.current.setFromNormalAndCoplanarPoint(camDir, handleWorld);
-
-    setDragging(true);
-  }, [camera, piece, zSign, fixedEndRef]);
-
-  const onPointerUp = useCallback(() => {
+  const hRef = useRef<THREE.Mesh>(null!);
+  const st = useRef(piece.length); const pl = useRef(new THREE.Plane());
+  const sp = useRef(new THREE.Vector3()); const cl = useRef(piece.length);
+  const zs = side === 'end' ? 1 : -1;
+  const onDown = useCallback((e: any) => {
+    e.stopPropagation(); (e.target as any).setPointerCapture(e.pointerId);
+    st.current = piece.length; cl.current = piece.length;
+    const w = new THREE.Vector3(); hRef.current.getWorldPosition(w);
+    sp.current.copy(w); const cd = new THREE.Vector3(); camera.getWorldDirection(cd);
+    pl.current.setFromNormalAndCoplanarPoint(cd, w); setDragging(true);
+  }, [camera, piece]);
+  const onUp = useCallback(() => {
     if (dragging) {
-      const newLen = Math.max(10, Math.round(currentLenRef.current));
-      const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
-      const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
-
-      // Grow from handle only: move center so fixed end stays put
-      const centerOffset = localZ.clone().multiplyScalar((newLen - piece.length) / 2 * zSign);
-      const newPos: [number, number, number] = [
-        piece.position[0] + centerOffset.x,
-        piece.position[1] + centerOffset.y,
-        piece.position[2] + centerOffset.z,
-      ];
-      updatePiece(piece.id, { length: newLen, position: newPos });
-    }
-    // Reset scale
-    resizeScaleRef.current = 1;
-    onScaleChange(1);
-    setDragging(false);
-  }, [dragging, piece, zSign, updatePiece, resizeScaleRef, onScaleChange]);
-
+      const nl = Math.max(10, Math.round(cl.current));
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
+      const lz = new THREE.Vector3(0,0,1).applyQuaternion(q);
+      const o = lz.clone().multiplyScalar((nl - piece.length) / 2 * zs);
+      updatePiece(piece.id, { length: nl, position: [piece.position[0]+o.x, piece.position[1]+o.y, piece.position[2]+o.z] });
+    } setDragging(false);
+  }, [dragging, piece, zs, updatePiece]);
   useFrame(() => {
-    if (!dragging || !handleRef.current) return;
-
-    raycaster.setFromCamera(pointer, camera);
-    const intersect = new THREE.Vector3();
-    if (!raycaster.ray.intersectPlane(dragPlaneRef.current, intersect)) return;
-
-    const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
-    const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
-
-    const delta = intersect.clone().sub(dragStartWorldRef.current);
-    const zDelta = delta.dot(localZ);
-    const newLen = Math.max(10, Math.round(startLenRef.current + (side === 'end' ? zDelta : -zDelta)));
-    currentLenRef.current = newLen;
-
-    // Live update handle position
-    handleRef.current.parent!.position.z = zSign * newLen / 2;
-
-    // Update scale ref for visual feedback (no geometry mutation)
-    const scaleFactor = newLen / piece.length;
-    resizeScaleRef.current = scaleFactor;
-    onScaleChange(scaleFactor);
+    if (!dragging || !hRef.current) return;
+    raycaster.setFromCamera(pointer, camera); const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(pl.current, hit)) return;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
+    const lz = new THREE.Vector3(0,0,1).applyQuaternion(q);
+    const zd = hit.clone().sub(sp.current).dot(lz);
+    cl.current = Math.max(10, Math.round(st.current + (side === 'end' ? zd : -zd)));
+    hRef.current.parent!.position.z = zs * cl.current / 2;
+    const grp = hRef.current.parent?.parent?.parent;
+    if (grp) grp.children.forEach((c: THREE.Object3D) => {
+      if (c.type === 'Mesh' && c !== hRef.current.parent && c !== hRef.current) {
+        const m = c as THREE.Mesh;
+        if (m.geometry.type === 'BoxGeometry') m.geometry.copy(new THREE.BoxGeometry(lumber.actualWidth, lumber.actualDepth, cl.current));
+      }
+    });
   });
-
   return (
-    <group position={[0, 0, zSign * piece.length / 2]}>
-      <mesh
-        ref={handleRef}
-        onPointerDown={onPointerDown}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
-      >
-        <boxGeometry args={[12, 12, 6]} />
-        <meshBasicMaterial color={dragging ? '#2563eb' : '#3b82f6'} transparent opacity={0.85} />
+    <group position={[0, 0, zs * piece.length / 2]}>
+      <mesh ref={hRef} onPointerDown={onDown} onPointerUp={onUp} onPointerLeave={onUp}>
+        <boxGeometry args={[12,12,6]} /><meshBasicMaterial color={dragging?'#2563eb':'#3b82f6'} transparent opacity={0.85} />
       </mesh>
-      <mesh position={[0, 0, zSign * -4]}>
-        <boxGeometry args={[2, 2, 4]} />
-        <meshBasicMaterial color="#60a5fa" transparent opacity={0.5} />
-      </mesh>
+      <mesh position={[0,0,zs*-4]}><boxGeometry args={[2,2,4]} /><meshBasicMaterial color="#60a5fa" transparent opacity={0.5} /></mesh>
     </group>
   );
 }

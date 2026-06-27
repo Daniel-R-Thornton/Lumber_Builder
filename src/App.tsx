@@ -19,8 +19,8 @@ export default function App() {
     const data = {
       version: 2,
       region: state.region,
-      pieces: state.pieces,
-      joints: state.joints,
+      pieces: Object.values(state.parts),
+      joints: Object.values(state.joints),
       dimensions: state.dimensions,
       exportedAt: new Date().toISOString(),
     };
@@ -59,7 +59,7 @@ export default function App() {
     const state = store.getState();
     // Build cutlist CSV
     const cutlistMap = new Map<string, { name: string; cuts: number[]; totalLength: number }>();
-    state.pieces.forEach(p => {
+    Object.values(state.parts).forEach(p => {
       const l = getLumberById(p.lumberId);
       if (!l) return;
       if (!cutlistMap.has(p.lumberId)) {

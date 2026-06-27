@@ -1,4 +1,5 @@
-import React, { Suspense, useMemo, useCallback } from 'react';
+import React, { Suspense, useMemo, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow';
 import { ErrorBoundary } from './ErrorBoundary';
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
@@ -8,8 +9,10 @@ import { LumberMesh } from './LumberMesh';
 import { JointMesh } from './JointMesh';
 import { DimensionLine } from './DimensionLine';
 import { PendingIndicator } from './PendingIndicator';
+import { FastenerManager } from './FastenerManager';
 import { MeasureTargets } from './MeasureTargets';
 import { HumanScale } from './HumanScale';
+import { DebugOverlay } from './DebugOverlay';
 import { CameraDebugView } from './CameraDebugView';
 import { Move, RotateCw, Maximize2, Ruler, Drill, User } from 'lucide-react';
 
@@ -85,8 +88,8 @@ function SceneControls() {
 }
 
 export function Scene() {
-  const pieces = useBuilderStore(state => state.pieces);
-  const joints = useBuilderStore(state => state.joints);
+  const pieces = useBuilderStore(useShallow(state => Object.values(state.parts)));
+  const joints = useBuilderStore(useShallow(state => Object.values(state.joints)));
   const dimensions = useBuilderStore(state => state.dimensions);
   const selectPiece = useBuilderStore(state => state.selectPiece);
   const selectJoint = useBuilderStore(state => state.selectJoint);
@@ -165,8 +168,10 @@ export function Scene() {
           ))}
           {/* Tool pending indicators */}
           <PendingIndicator />
+          <FastenerManager />
           <MeasureTargets />
           <HumanScale />
+          <DebugOverlay />
         </Suspense>
 
         <Grid 

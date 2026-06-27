@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useBuilderStore } from '../store';
 import { LUMBER_LIBRARY } from '../data';
-import { Plus, Ruler, Settings2, Grid as GridIcon, Camera, Search } from 'lucide-react';
+import { Plus, Ruler, Settings2, Grid as GridIcon, Camera, Search, Magnet } from 'lucide-react';
 
 export function Sidebar() {
-  const { region, setRegion, addPiece, snapSize, setSnapSize, isOrthographic, setIsOrthographic } = useBuilderStore();
+  const { region, setRegion, addPiece, snapSize, setSnapSize, isOrthographic, setIsOrthographic, snapThreshold, setSnapThreshold, snapLockAcquire, setSnapLockAcquire, snapLockRelease, setSnapLockRelease } = useBuilderStore();
   const [selectedLumber, setSelectedLumber] = useState<string>('');
   const [lengthInput, setLengthInput] = useState<string>('1000');
   const [filter, setFilter] = useState<string>('');
@@ -81,6 +81,29 @@ export function Sidebar() {
               <option value={50}>50mm</option>
               <option value={100}>100mm</option>
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+              <Magnet className="w-4 h-4" /> Snap Detection
+            </label>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 w-20">Range (mm)</span>
+                <input type="range" min="5" max="100" value={snapThreshold} onChange={e => setSnapThreshold(Number(e.target.value))} className="flex-1" />
+                <span className="text-xs font-mono text-gray-600 w-8 text-right">{snapThreshold}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 w-20">Lock (mm)</span>
+                <input type="range" min="1" max="30" value={snapLockAcquire} onChange={e => setSnapLockAcquire(Number(e.target.value))} className="flex-1" />
+                <span className="text-xs font-mono text-gray-600 w-8 text-right">{snapLockAcquire}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 w-20">Release (mm)</span>
+                <input type="range" min="2" max="50" value={snapLockRelease} onChange={e => setSnapLockRelease(Number(e.target.value))} className="flex-1" />
+                <span className="text-xs font-mono text-gray-600 w-8 text-right">{snapLockRelease}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
