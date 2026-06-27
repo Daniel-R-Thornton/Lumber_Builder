@@ -9,8 +9,9 @@ import { JointMesh } from './JointMesh';
 import { DimensionLine } from './DimensionLine';
 import { PendingIndicator } from './PendingIndicator';
 import { MeasureTargets } from './MeasureTargets';
+import { HumanScale } from './HumanScale';
 import { CameraDebugView } from './CameraDebugView';
-import { Move, RotateCw, Maximize2, Ruler, Drill } from 'lucide-react';
+import { Move, RotateCw, Maximize2, Ruler, Drill, User } from 'lucide-react';
 
 function SceneControls() {
   const transformMode = useBuilderStore(state => state.transformMode);
@@ -19,6 +20,8 @@ function SceneControls() {
   const toggleMeasureMode = useBuilderStore(state => state.toggleMeasureMode);
   const jointToolMode = useBuilderStore(state => state.jointToolMode);
   const toggleJointToolMode = useBuilderStore(state => state.toggleJointToolMode);
+  const showHumanScale = useBuilderStore(state => state.showHumanScale);
+  const toggleHumanScale = useBuilderStore(state => state.toggleHumanScale);
 
   const modeButtons: { mode: TransformMode; icon: React.ReactNode; label: string }[] = [
     { mode: 'translate', icon: <Move className="w-4 h-4" />, label: 'Move (T)' },
@@ -65,6 +68,17 @@ function SceneControls() {
         title="Drill / Nailgun (N)"
       >
         <Drill className="w-4 h-4" />
+      </button>
+      <button
+        onClick={toggleHumanScale}
+        className={`flex items-center justify-center w-10 h-10 transition-colors ${
+          showHumanScale
+            ? 'bg-green-600 text-white shadow-inner'
+            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+        }`}
+        title="Toggle human scale reference"
+      >
+        <User className="w-4 h-4" />
       </button>
     </div>
   );
@@ -151,6 +165,7 @@ export function Scene() {
           {/* Tool pending indicators */}
           <PendingIndicator />
           <MeasureTargets />
+          <HumanScale />
         </Suspense>
 
         <Grid 

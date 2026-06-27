@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
 import { useBuilderStore } from '../store';
 import { LUMBER_LIBRARY } from '../data';
-import { Plus, Ruler, Settings2, Grid as GridIcon, Camera } from 'lucide-react';
+import { Plus, Ruler, Settings2, Grid as GridIcon, Camera, Search } from 'lucide-react';
 
 export function Sidebar() {
   const { region, setRegion, addPiece, snapSize, setSnapSize, isOrthographic, setIsOrthographic } = useBuilderStore();
   const [selectedLumber, setSelectedLumber] = useState<string>('');
-  const [lengthInput, setLengthInput] = useState<string>('1000'); // default 1000mm
+  const [lengthInput, setLengthInput] = useState<string>('1000');
+  const [filter, setFilter] = useState<string>('');
 
-  const availableLumber = LUMBER_LIBRARY.filter(l => l.region === region);
+  const availableLumber = LUMBER_LIBRARY.filter(l => l.region === region && (
+    !filter || l.name.toLowerCase().includes(filter.toLowerCase()) ||
+    `${l.actualWidth}x${l.actualDepth}`.includes(filter)
+  ));
 
   const handleAdd = () => {
     if (!selectedLumber) return;
@@ -94,7 +98,17 @@ export function Sidebar() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Profile</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="relative mb-2">
+              <Search className="absolute left-2 top-2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Filter…"
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+                className="w-full pl-8 pr-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
               {availableLumber.map(lumber => (
                 <button
                   key={lumber.id}

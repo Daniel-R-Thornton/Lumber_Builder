@@ -33,6 +33,7 @@ interface BuilderState {
   jointToolMode: boolean;
   /** Pending joint tool data: first piece + intersection point + normal */
   _jointToolPending: { pieceId: string; position: [number, number, number]; normal: [number, number, number] } | null;
+  showHumanScale: boolean;
 
   // History
   _history: Snapshot[];
@@ -53,6 +54,7 @@ interface BuilderState {
   cancelPendingDimension: () => void;
   toggleJointToolMode: () => void;
   cancelJointToolPending: () => void;
+  toggleHumanScale: () => void;
   addPiece: (lumberId: string, length: number) => void;
   updatePiece: (id: string, updates: Partial<ScenePiece>) => void;
   removePiece: (id: string) => void;
@@ -105,6 +107,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
   _dimensionPending: null,
   jointToolMode: false,
   _jointToolPending: null,
+  showHumanScale: false,
   _history: [],
   _historyIdx: -1,
   _clipboard: null,
@@ -144,6 +147,7 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
 
   toggleJointToolMode: () => set(s => ({ jointToolMode: !s.jointToolMode, _jointToolPending: null, measureMode: false, _dimensionPending: null, transformMode: 'translate' })),
   cancelJointToolPending: () => set({ _jointToolPending: null }),
+  toggleHumanScale: () => set(s => ({ showHumanScale: !s.showHumanScale })),
 
   addPiece: (lumberId, length) => {
     get()._pushHistory();
