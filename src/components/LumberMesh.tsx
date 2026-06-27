@@ -32,6 +32,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const ghostPreviewRef = useRef<THREE.Mesh>(null!);
 
   const [isDragging, setIsDragging] = useState(false);
+  const draggingRef = useRef(false); // sync flag for useFrame
   const [ctrlHeld, setCtrlHeld] = useState(false);
   const snapLockRef = useRef<{ targetId: string; targetPos: THREE.Vector3; targetNorm: THREE.Vector3 } | null>(null);
   interface SnapInfo {
@@ -152,12 +153,13 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
   // ---- Dragging ----
   const onDragStart = useCallback(() => {
-    setIsDragging(true); setNearSnap(null);
-    snapLockRef.current = null; // release any previous snap lock
+    setIsDragging(true); draggingRef.current = true;
+    setNearSnap(null);
+    snapLockRef.current = null;
   }, []);
 
   const onDragEnd = useCallback(() => {
-    setIsDragging(false);
+    setIsDragging(false); draggingRef.current = false;
     const m = meshRef.current; if (!m) return;
     const p: [number, number, number] = [m.position.x, m.position.y, m.position.z];
     const r: [number, number, number] = [m.rotation.x, m.rotation.y, m.rotation.z];
@@ -231,7 +233,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
   // ---- useFrame: proximity check + snap lock ----
   useFrame(() => {
-    if (!isDragging || !meshRef.current) { setNearSnap(null); return; }
+    if (!draggingRef.current || !meshRef.current) { setNearSnap(null); return; }
     const mp = meshRef.current.position;
 
     // Snap lock: if locked and still within 10mm of target, keep locked

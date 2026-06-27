@@ -132,17 +132,14 @@ function lumberDim(piece: ScenePiece, axis: 0 | 1 | 2): number {
   return piece.length;
 }
 
-/** Compute a tangent vector perpendicular to the normal and board orientation */
-function computeTangent(normal: THREE.Vector3, rotation: [number, number, number]): THREE.Vector3 {
-  // Use the board's local Z axis (length direction) as reference
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation));
-  const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
-  // Tangent is perpendicular to both normal and localZ
-  const tangent = new THREE.Vector3().crossVectors(normal, localZ).normalize();
+/** Compute a tangent vector perpendicular to the normal (spread direction for fasteners) */
+function computeTangent(normal: THREE.Vector3, _rotation: [number, number, number]): THREE.Vector3 {
+  // Use WORLD UP as reference so fasteners spread horizontally in the view
+  const up = new THREE.Vector3(0, 1, 0);
+  const tangent = new THREE.Vector3().crossVectors(normal, up).normalize();
   if (tangent.length() < 0.01) {
-    // normal is parallel to localZ — use localX instead
-    const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-    tangent.crossVectors(normal, localX).normalize();
+    // Normal is vertical (parallel to up) — use world X instead
+    tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0)).normalize();
   }
   return tangent;
 }
