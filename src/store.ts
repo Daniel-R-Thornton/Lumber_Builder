@@ -36,6 +36,9 @@ interface BuilderState {
   showHumanScale: boolean;
   showDebug: boolean;
   _debugSnap: { ghostFace: [number, number, number]; targetFace: [number, number, number]; distance: number; type: string } | null;
+  snapThreshold: number;
+  snapLockAcquire: number;
+  snapLockRelease: number;
 
   // History
   _history: Snapshot[];
@@ -59,6 +62,9 @@ interface BuilderState {
   toggleHumanScale: () => void;
   toggleDebug: () => void;
   setDebugSnap: (data: { ghostFace: [number, number, number]; targetFace: [number, number, number]; distance: number; type: string } | null) => void;
+  setSnapThreshold: (v: number) => void;
+  setSnapLockAcquire: (v: number) => void;
+  setSnapLockRelease: (v: number) => void;
   addPiece: (lumberId: string, length: number) => void;
   updatePiece: (id: string, updates: Partial<ScenePiece>) => void;
   removePiece: (id: string) => void;
@@ -114,6 +120,9 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
   showHumanScale: false,
   showDebug: false,
   _debugSnap: null,
+  snapThreshold: 25,
+  snapLockAcquire: 5,
+  snapLockRelease: 10,
   _history: [],
   _historyIdx: -1,
   _clipboard: null,
@@ -156,6 +165,9 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
   toggleHumanScale: () => set(s => ({ showHumanScale: !s.showHumanScale })),
   toggleDebug: () => set(s => ({ showDebug: !s.showDebug })),
   setDebugSnap: (data) => set({ _debugSnap: data }),
+  setSnapThreshold: (v) => set({ snapThreshold: v }),
+  setSnapLockAcquire: (v) => set({ snapLockAcquire: v }),
+  setSnapLockRelease: (v) => set({ snapLockRelease: v }),
 
   addPiece: (lumberId, length) => {
     get()._pushHistory();

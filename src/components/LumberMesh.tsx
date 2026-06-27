@@ -7,8 +7,6 @@ import * as THREE from 'three';
 
 interface LumberMeshProps { id: string }
 
-const SNAP_THRESHOLD = 25;
-
 /* ---------------------------------------------------------------
  * Core part: single mesh, TransformControls-driven.
  * Snap on release with three joint types + fastener patterns.
@@ -23,6 +21,9 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const allPieces = useBuilderStore(s => s.pieces);
   const showDebug = useBuilderStore(s => s.showDebug);
   const setDebugSnap = useBuilderStore(s => s.setDebugSnap);
+  const snapThreshold = useBuilderStore(s => s.snapThreshold);
+  const snapLockAcquire = useBuilderStore(s => s.snapLockAcquire);
+  const snapLockRelease = useBuilderStore(s => s.snapLockRelease);
 
   const [mesh, setMesh] = useState<THREE.Mesh | null>(null);
   const meshRef = useRef<THREE.Mesh | null>(null);
@@ -113,7 +114,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
         }
       }
     }
-    if (best < SNAP_THRESHOLD && bestData) {
+    if (best < snapThreshold && bestData) {
       if (showDebug) {
         console.log(`[SNAP] ${bestData.type} id=${bestData.otherId.slice(0,6)} dist=${best.toFixed(1)}mm  offset=(${bestData.offset.x.toFixed(0)},${bestData.offset.y.toFixed(0)},${bestData.offset.z.toFixed(0)})`);
         // Find the matching ghost face for the debug overlay
@@ -234,7 +235,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
     // Snap lock: if locked and still within 10mm of target, keep locked
     if (snapLockRef.current) {
       const d = mp.distanceTo(snapLockRef.current.targetPos);
-      if (d > 10) snapLockRef.current = null; // release lock
+      if (d > snapLockRelease) snapLockRef.current = null;
       else { setNearSnap(null); return; } // still locked, no new detection
     }
 
@@ -278,7 +279,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
     if (snap && snap.offset) {
       const ghostFace = new THREE.Vector3(p[0]+snap.offset.x, p[1]+snap.offset.y, p[2]+snap.offset.z);
       const d = ghostFace.distanceTo(new THREE.Vector3(...snap.position));
-      if (d < 5) {
+      if (d < snapLockAcquire) {
         snapLockRef.current = {
           targetId: snap.otherId,
           targetPos: new THREE.Vector3(...snap.position),
