@@ -276,15 +276,33 @@ export function LumberMesh({ id }: LumberMeshProps) {
   }
   const portPositions = getPorts();
 
-  // ---- Ghost preview mesh (shown when near snap) ----
-  const ghostPos = useMemo(() => {
-    if (!nearSnap || !meshRef.current || ctrlHeld) return null;
-    return new THREE.Vector3(
-      meshRef.current.position.x + nearSnap.offset.x,
-      meshRef.current.position.y + nearSnap.offset.y,
-      meshRef.current.position.z + nearSnap.offset.z,
-    );
-  }, [nearSnap, ctrlHeld]);
+  // ---- Ghost preview — shows EXACT final position (surface-to-surface) ----
+  const ghostPreview = useMemo(() => {
+    if (!nearSnap || ctrlHeld) return null;
+    const targetFC = new THREE.Vector3(...nearSnap.position);
+    const targetN = new THREE.Vector3(...nearSnap.normal).normalize();
+    const movingN = new THREE.Vector3(...nearSnap.ghostNormal).normalize();
+    const movingThick = thick({ lumberId: piece.lumberId, rotation: piece.rotation, length: piece.length }, movingN);
+
+    // Position = targetFaceCentre + targetNormal * (movingThickness / 2)
+    const pos = targetFC.clone().add(targetN.clone().multiplyScalar(movingThick / 2));
+
+    // Rotation = normal-lock applied to CURRENT drag rotation
+    let rot = piece.rotation;
+    const currentRot = meshRef.current?.rotation;
+    const baseRot: [number, number, number] = currentRot
+      ? [currentRot.x, currentRot.y, currentRot.z]
+      : piece.rotation;
+    if (nearSnap.type === 'butt') {
+      const q = new THREE.Quaternion().setFromUnitVectors(movingN, targetN.clone().negate());
+      const curQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...baseRot));
+      curQ.premultiply(q);
+      const e = new THREE.Euler().setFromQuaternion(curQ);
+      rot = [e.x, e.y, e.z] as [number, number, number];
+    }
+
+    return { position: pos, rotation: rot };
+  }, [nearSnap, ctrlHeld, piece]);
 
   const edgeColor = nearSnap ? '#4ade80' : isDragging ? '#60a5fa' : isSelected ? '#ffffff' : '#8c6b4a';
 
@@ -318,9 +336,9 @@ export function LumberMesh({ id }: LumberMeshProps) {
         </lineSegments>
       </mesh>
 
-      {/* Ghost preview — transparent copy at snapped position */}
-      {ghostPos && (
-        <mesh position={ghostPos} rotation={piece.rotation}>
+      {/* Ghost preview — shows exact snapped position before release */}
+      {ghostPreview && (
+        <mesh position={ghostPreview.position} rotation={ghostPreview.rotation}>
           <boxGeometry args={args} />
           <meshStandardMaterial color="#4ade80" transparent opacity={0.25} depthWrite={false} />
         </mesh>
