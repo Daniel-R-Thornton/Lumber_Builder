@@ -27,6 +27,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const [mesh, setMesh] = useState<THREE.Mesh | null>(null);
   const meshRef = useRef<THREE.Mesh | null>(null);
   if (mesh) meshRef.current = mesh;
+  const ghostPreviewRef = useRef<THREE.Mesh>(null!);
 
   const [isDragging, setIsDragging] = useState(false);
   const [ctrlHeld, setCtrlHeld] = useState(false);
@@ -183,11 +184,17 @@ export function LumberMesh({ id }: LumberMeshProps) {
         finalRot = [e.x, e.y, e.z] as [number, number, number];
       }
 
-      // Position: target face centre + half moving thickness along target normal
+      // Axis-locked snap: only change the NORMAL component of position.
+      // Tangential position stays at the user's drag position.
+      // fullSnapPos = targetFC + targetN * (thickness/2)  (full 3D)
+      // snappedPos = dragPos + (fullSnapComponent - dragComponent) * targetN
+      const dragPos = new THREE.Vector3(p[0], p[1], p[2]);
+      const dragComp = dragPos.dot(targetN);
+      const fullSnapComp = targetFC.dot(targetN) + movingThick / 2;
       const snapped: [number, number, number] = [
-        targetFC.x + targetN.x * (movingThick / 2),
-        targetFC.y + targetN.y * (movingThick / 2),
-        targetFC.z + targetN.z * (movingThick / 2),
+        p[0] + targetN.x * (fullSnapComp - dragComp),
+        p[1] + targetN.y * (fullSnapComp - dragComp),
+        p[2] + targetN.z * (fullSnapComp - dragComp),
       ];
 
       if (showDebug) console.log(`[SNAP] finalPos=(${snapped.map(v=>v.toFixed(0)).join(',')})  targetFC=(${targetFC.x.toFixed(0)},${targetFC.y.toFixed(0)},${targetFC.z.toFixed(0)})  normal=(${targetN.x.toFixed(2)},${targetN.y.toFixed(2)},${targetN.z.toFixed(2)})  thick=${movingThick}`);
@@ -236,6 +243,37 @@ export function LumberMesh({ id }: LumberMeshProps) {
     const snap = ctrlHeld ? null : findSnap(p, r);
     setNearSnap(snap);
 
+    // Update ghost preview position (ref-based, follows drag)
+    if (snap && !ctrlHeld && ghostPreviewRef.current) {
+      const targetFC = new THREE.Vector3(...snap.position);
+      const targetN = new THREE.Vector3(...snap.normal).normalize();
+      const movingN = new THREE.Vector3(...snap.ghostNormal).normalize();
+      const movingThick = thick({ lumberId: piece.lumberId, rotation: piece.rotation, length: piece.length }, movingN);
+
+      // Axis-locked position
+      const dragComp = mp.dot(targetN);
+      const fullSnapComp = targetFC.dot(targetN) + movingThick / 2;
+      ghostPreviewRef.current.position.set(
+        mp.x + targetN.x * (fullSnapComp - dragComp),
+        mp.y + targetN.y * (fullSnapComp - dragComp),
+        mp.z + targetN.z * (fullSnapComp - dragComp),
+      );
+
+      // Normal-lock rotation from current drag rotation
+      if (snap.type === 'butt') {
+        const q = new THREE.Quaternion().setFromUnitVectors(movingN, targetN.clone().negate());
+        const cr = meshRef.current?.rotation;
+        if (cr) {
+          const cq = new THREE.Quaternion().setFromEuler(cr);
+          cq.premultiply(q);
+          ghostPreviewRef.current.rotation.setFromQuaternion(cq);
+        }
+      }
+      ghostPreviewRef.current.visible = true;
+    } else if (ghostPreviewRef.current) {
+      ghostPreviewRef.current.visible = false;
+    }
+
     // Acquire snap lock when within 5mm of target face centre
     if (snap && snap.offset) {
       const ghostFace = new THREE.Vector3(p[0]+snap.offset.x, p[1]+snap.offset.y, p[2]+snap.offset.z);
@@ -276,33 +314,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
   }
   const portPositions = getPorts();
 
-  // ---- Ghost preview — shows EXACT final position (surface-to-surface) ----
-  const ghostPreview = useMemo(() => {
-    if (!nearSnap || ctrlHeld) return null;
-    const targetFC = new THREE.Vector3(...nearSnap.position);
-    const targetN = new THREE.Vector3(...nearSnap.normal).normalize();
-    const movingN = new THREE.Vector3(...nearSnap.ghostNormal).normalize();
-    const movingThick = thick({ lumberId: piece.lumberId, rotation: piece.rotation, length: piece.length }, movingN);
-
-    // Position = targetFaceCentre + targetNormal * (movingThickness / 2)
-    const pos = targetFC.clone().add(targetN.clone().multiplyScalar(movingThick / 2));
-
-    // Rotation = normal-lock applied to CURRENT drag rotation
-    let rot = piece.rotation;
-    const currentRot = meshRef.current?.rotation;
-    const baseRot: [number, number, number] = currentRot
-      ? [currentRot.x, currentRot.y, currentRot.z]
-      : piece.rotation;
-    if (nearSnap.type === 'butt') {
-      const q = new THREE.Quaternion().setFromUnitVectors(movingN, targetN.clone().negate());
-      const curQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(...baseRot));
-      curQ.premultiply(q);
-      const e = new THREE.Euler().setFromQuaternion(curQ);
-      rot = [e.x, e.y, e.z] as [number, number, number];
-    }
-
-    return { position: pos, rotation: rot };
-  }, [nearSnap, ctrlHeld, piece]);
+  // ---- Ghost preview — updated every frame in useFrame ----
+  // Ref-based so it tracks drag position without re-renders
 
   const edgeColor = nearSnap ? '#4ade80' : isDragging ? '#60a5fa' : isSelected ? '#ffffff' : '#8c6b4a';
 
@@ -336,13 +349,11 @@ export function LumberMesh({ id }: LumberMeshProps) {
         </lineSegments>
       </mesh>
 
-      {/* Ghost preview — shows exact snapped position before release */}
-      {ghostPreview && (
-        <mesh position={ghostPreview.position} rotation={ghostPreview.rotation}>
-          <boxGeometry args={args} />
-          <meshStandardMaterial color="#4ade80" transparent opacity={0.25} depthWrite={false} />
-        </mesh>
-      )}
+      {/* Ghost preview — positioned/visibility toggled in useFrame */}
+      <mesh ref={ghostPreviewRef} visible={false}>
+        <boxGeometry args={args} />
+        <meshStandardMaterial color="#4ade80" transparent opacity={0.25} depthWrite={false} />
+      </mesh>
 
       {/* Port nodes on selected piece */}
       {isSelected && portPositions.map((fp, i) => (
