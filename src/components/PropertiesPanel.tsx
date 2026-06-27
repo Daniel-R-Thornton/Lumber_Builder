@@ -52,7 +52,7 @@ export function PropertiesPanel() {
   // ---- All hooks MUST come before any conditional return ----
 
   // Joint-derived data
-  const joint = useMemo(() => selectedJointId ? (useBuilderStore.getState().joints[selectedJointId] || null) : null, [selectedJointId]);
+  const joint = useBuilderStore(s => selectedJointId ? (s.joints[selectedJointId] || null) : null);
   const p1 = useMemo(() => joint ? (parts[joint.piece1Id] || null) : null, [parts, joint]);
   const p2 = useMemo(() => joint ? (parts[joint.piece2Id] || null) : null, [parts, joint]);
 
