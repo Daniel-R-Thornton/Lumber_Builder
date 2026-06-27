@@ -1,10 +1,17 @@
-import { create } from 'zustand';
-import { ScenePiece, Joint, Dimension, Fastener, FixingType, Region } from './types';
-import { getLumberById } from './data';
-import * as THREE from 'three';
-import { v4 as uuidv4 } from 'uuid';
+import { create } from "zustand";
+import {
+  ScenePiece,
+  Joint,
+  Dimension,
+  Fastener,
+  FixingType,
+  Region,
+} from "./types";
+import { getLumberById } from "./data";
+import * as THREE from "three";
+import { v4 as uuidv4 } from "uuid";
 
-export type TransformMode = 'translate' | 'rotate' | 'resize';
+export type TransformMode = "translate" | "rotate" | "resize";
 
 const MAX_HISTORY = 50;
 
@@ -46,8 +53,15 @@ export interface BuilderState {
   _historyIdx: number;
   _pushHistory: () => void;
   _clipboard: ScenePiece | null;
-  _dimensionPending: { pieceId: string; position: [number, number, number] } | null;
-  _jointToolPending: { pieceId: string; position: [number, number, number]; normal: [number, number, number] } | null;
+  _dimensionPending: {
+    pieceId: string;
+    position: [number, number, number];
+  } | null;
+  _jointToolPending: {
+    pieceId: string;
+    position: [number, number, number];
+    normal: [number, number, number];
+  } | null;
 
   undo: () => void;
   redo: () => void;
@@ -74,12 +88,17 @@ export interface BuilderState {
   copySelected: () => void;
   pasteClipboard: () => void;
 
-  addJoint: (joint: Omit<Joint, 'id'>) => void;
+  addJoint: (joint: Omit<Joint, "id">) => void;
   updateJoint: (id: string, updates: Partial<Joint>) => void;
   removeJoint: (id: string) => void;
   selectJoint: (id: string | null) => void;
 
-  addDimension: (p1: string, p2: string, v: number, lo: [number, number, number]) => void;
+  addDimension: (
+    p1: string,
+    p2: string,
+    v: number,
+    lo: [number, number, number],
+  ) => void;
   updateDimension: (id: string, u: Partial<Dimension>) => void;
   removeDimension: (id: string) => void;
   selectDimension: (id: string | null) => void;
@@ -87,12 +106,20 @@ export interface BuilderState {
   /** Regenerate fasteners for all dirty joints */
   resolveDirtyJoints: () => void;
 
-  loadState: (s: { pieces: ScenePiece[]; joints: Joint[]; dimensions?: Dimension[]; region: Region }) => void;
+  loadState: (s: {
+    pieces: ScenePiece[];
+    joints: Joint[];
+    dimensions?: Dimension[];
+    region: Region;
+  }) => void;
 }
 
 function takeSnapshot(s: BuilderState): Snapshot {
   return structuredClone({
-    parts: s.parts, joints: s.joints, fasteners: s.fasteners, dimensions: s.dimensions,
+    parts: s.parts,
+    joints: s.joints,
+    fasteners: s.fasteners,
+    dimensions: s.dimensions,
   });
 }
 
@@ -101,39 +128,91 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
   joints: {},
   fasteners: {},
   dimensions: [],
-  selectedPieceId: null, selectedJointId: null, selectedDimensionId: null,
-  region: 'AUS', snapSize: 25, isOrthographic: false, transformMode: 'translate',
-  measureMode: false, jointToolMode: false, showHumanScale: false, showDebug: false,
-  _debugSnap: null, snapThreshold: 25, snapLockAcquire: 5, snapLockRelease: 10,
-  _history: [], _historyIdx: -1, _clipboard: null,
-  _dimensionPending: null, _jointToolPending: null,
+  selectedPieceId: null,
+  selectedJointId: null,
+  selectedDimensionId: null,
+  region: "AUS",
+  snapSize: 25,
+  isOrthographic: false,
+  transformMode: "translate",
+  measureMode: false,
+  jointToolMode: false,
+  showHumanScale: false,
+  showDebug: false,
+  _debugSnap: null,
+  snapThreshold: 25,
+  snapLockAcquire: 5,
+  snapLockRelease: 10,
+  _history: [],
+  _historyIdx: -1,
+  _clipboard: null,
+  _dimensionPending: null,
+  _jointToolPending: null,
 
   _pushHistory: () => {
-    const s = get(); const snap = takeSnapshot(s);
-    const h = s._history.slice(0, s._historyIdx + 1); h.push(snap);
+    const s = get();
+    const snap = takeSnapshot(s);
+    const h = s._history.slice(0, s._historyIdx + 1);
+    h.push(snap);
     if (h.length > MAX_HISTORY) h.shift();
     set({ _history: h, _historyIdx: h.length - 1 });
   },
 
   undo: () => {
-    const s = get(); if (s._historyIdx <= 0) return;
-    const i = s._historyIdx - 1; const snap = s._history[i];
-    set({ parts: snap.parts, joints: snap.joints, fasteners: snap.fasteners, dimensions: snap.dimensions, _historyIdx: i });
+    const s = get();
+    if (s._historyIdx <= 0) return;
+    const i = s._historyIdx - 1;
+    const snap = s._history[i];
+    set({
+      parts: snap.parts,
+      joints: snap.joints,
+      fasteners: snap.fasteners,
+      dimensions: snap.dimensions,
+      _historyIdx: i,
+    });
   },
   redo: () => {
-    const s = get(); if (s._historyIdx >= s._history.length - 1) return;
-    const i = s._historyIdx + 1; const snap = s._history[i];
-    set({ parts: snap.parts, joints: snap.joints, fasteners: snap.fasteners, dimensions: snap.dimensions, _historyIdx: i });
+    const s = get();
+    if (s._historyIdx >= s._history.length - 1) return;
+    const i = s._historyIdx + 1;
+    const snap = s._history[i];
+    set({
+      parts: snap.parts,
+      joints: snap.joints,
+      fasteners: snap.fasteners,
+      dimensions: snap.dimensions,
+      _historyIdx: i,
+    });
   },
 
   setRegion: (r) => set({ region: r }),
   setSnapSize: (v) => set({ snapSize: v }),
   setIsOrthographic: (v) => set({ isOrthographic: v }),
-  setTransformMode: (m) => set({ transformMode: m, measureMode: false, _dimensionPending: null, jointToolMode: false, _jointToolPending: null }),
-  toggleMeasureMode: () => set(s => ({ measureMode: !s.measureMode, _dimensionPending: null, jointToolMode: false, _jointToolPending: null })),
-  toggleJointToolMode: () => set(s => ({ jointToolMode: !s.jointToolMode, _jointToolPending: null, measureMode: false, _dimensionPending: null, transformMode: 'translate' })),
-  toggleHumanScale: () => set(s => ({ showHumanScale: !s.showHumanScale })),
-  toggleDebug: () => set(s => ({ showDebug: !s.showDebug })),
+  setTransformMode: (m) =>
+    set({
+      transformMode: m,
+      measureMode: false,
+      _dimensionPending: null,
+      jointToolMode: false,
+      _jointToolPending: null,
+    }),
+  toggleMeasureMode: () =>
+    set((s) => ({
+      measureMode: !s.measureMode,
+      _dimensionPending: null,
+      jointToolMode: false,
+      _jointToolPending: null,
+    })),
+  toggleJointToolMode: () =>
+    set((s) => ({
+      jointToolMode: !s.jointToolMode,
+      _jointToolPending: null,
+      measureMode: false,
+      _dimensionPending: null,
+      transformMode: "translate",
+    })),
+  toggleHumanScale: () => set((s) => ({ showHumanScale: !s.showHumanScale })),
+  toggleDebug: () => set((s) => ({ showDebug: !s.showDebug })),
   setDebugSnap: (d) => set({ _debugSnap: d }),
   setSnapThreshold: (v) => set({ snapThreshold: v }),
   setSnapLockAcquire: (v) => set({ snapLockAcquire: v }),
@@ -143,16 +222,30 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
 
   addPiece: (lumberId, length) => {
     get()._pushHistory();
-    const lumber = getLumberById(lumberId); if (!lumber) return;
+    const lumber = getLumberById(lumberId);
+    if (!lumber) return;
     const id = uuidv4();
-    const piece: ScenePiece = { id, lumberId, length, position: [0, length / 2, 0], rotation: [0, 0, 0], jointIds: [] };
-    set(s => ({ parts: { ...s.parts, [id]: piece }, selectedPieceId: id, selectedJointId: null }));
+    const piece: ScenePiece = {
+      id,
+      lumberId,
+      length,
+      position: [0, length / 2, 0],
+      rotation: [0, 0, 0],
+      jointIds: [],
+    };
+    set((s) => ({
+      parts: { ...s.parts, [id]: piece },
+      selectedPieceId: id,
+      selectedJointId: null,
+    }));
   },
 
   updatePiece: (id, updates) => {
     const s = get();
-    if (updates.position || updates.length !== undefined || updates.rotation) s._pushHistory();
-    const old = s.parts[id]; if (!old) return;
+    if (updates.position || updates.length !== undefined || updates.rotation)
+      s._pushHistory();
+    const old = s.parts[id];
+    if (!old) return;
     const updated = { ...old, ...updates };
     // Mark all associated joints as dirty
     let newJoints = { ...s.joints };
@@ -168,8 +261,10 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
   removePiece: (id) => {
     get()._pushHistory();
     const s = get();
-    const p = s.parts[id]; if (!p) return;
-    const newParts = { ...s.parts }; delete newParts[id];
+    const p = s.parts[id];
+    if (!p) return;
+    const newParts = { ...s.parts };
+    delete newParts[id];
     const newJoints = { ...s.joints };
     const newFasteners = { ...s.fasteners };
     for (const jid of p.jointIds) {
@@ -180,48 +275,92 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
       }
     }
     set({
-      parts: newParts, joints: newJoints, fasteners: newFasteners,
+      parts: newParts,
+      joints: newJoints,
+      fasteners: newFasteners,
       selectedPieceId: s.selectedPieceId === id ? null : s.selectedPieceId,
     });
   },
 
-  selectPiece: (id) => set({ selectedPieceId: id, selectedJointId: null, selectedDimensionId: null }),
+  selectPiece: (id) =>
+    set({
+      selectedPieceId: id,
+      selectedJointId: null,
+      selectedDimensionId: null,
+    }),
 
   duplicatePiece: (id, inPlace = false) => {
     get()._pushHistory();
-    const s = get(); const old = s.parts[id]; if (!old) return;
+    const s = get();
+    const old = s.parts[id];
+    if (!old) return;
     const newId = uuidv4();
     const offset = inPlace ? 0 : 100;
     const piece: ScenePiece = {
-      ...old, id: newId, jointIds: [],
-      position: [old.position[0] + offset, old.position[1], old.position[2] + offset],
+      ...old,
+      id: newId,
+      jointIds: [],
+      position: [
+        old.position[0] + offset,
+        old.position[1],
+        old.position[2] + offset,
+      ],
     };
-    set(s => ({ parts: { ...s.parts, [newId]: piece }, selectedPieceId: newId, selectedJointId: null }));
+    set((s) => ({
+      parts: { ...s.parts, [newId]: piece },
+      selectedPieceId: newId,
+      selectedJointId: null,
+    }));
   },
 
   copySelected: () => {
-    const s = get(); const p = s.parts[s.selectedPieceId || '']; if (!p) return;
+    const s = get();
+    const p = s.parts[s.selectedPieceId || ""];
+    if (!p) return;
     set({ _clipboard: structuredClone(p) });
   },
 
   pasteClipboard: () => {
-    const s = get(); if (!s._clipboard) return;
+    const s = get();
+    if (!s._clipboard) return;
     get()._pushHistory();
     const newId = uuidv4();
     const piece: ScenePiece = {
-      ...s._clipboard, id: newId, jointIds: [],
-      position: [s._clipboard.position[0] + 100, s._clipboard.position[1], s._clipboard.position[2] + 100],
+      ...s._clipboard,
+      id: newId,
+      jointIds: [],
+      position: [
+        s._clipboard.position[0] + 100,
+        s._clipboard.position[1],
+        s._clipboard.position[2] + 100,
+      ],
     };
-    set(s => ({ parts: { ...s.parts, [newId]: piece }, selectedPieceId: newId, selectedJointId: null }));
+    set((s) => ({
+      parts: { ...s.parts, [newId]: piece },
+      selectedPieceId: newId,
+      selectedJointId: null,
+    }));
   },
 
   addJoint: (joint) => {
     get()._pushHistory();
     const s = get();
+
+    // Dedup: check if a joint between these two pieces already exists within 10mm
+    for (const j of Object.values(s.joints)) {
+      const samePair = (j.piece1Id === joint.piece1Id && j.piece2Id === joint.piece2Id) ||
+                       (j.piece1Id === joint.piece2Id && j.piece2Id === joint.piece1Id);
+      if (!samePair) continue;
+      const dx = j.position[0] - joint.position[0];
+      const dy = j.position[1] - joint.position[1];
+      const dz = j.position[2] - joint.position[2];
+      if (dx * dx + dy * dy + dz * dz < 100) return; // within 10mm
+    }
+
     const id = uuidv4();
     const newJoint: Joint = { ...joint, id, dirty: false };
-    // Update FK references on both pieces
-    const p1 = s.parts[joint.piece1Id]; const p2 = s.parts[joint.piece2Id];
+    const p1 = s.parts[joint.piece1Id];
+    const p2 = s.parts[joint.piece2Id];
     if (!p1 || !p2) return;
     set({
       joints: { ...s.joints, [id]: newJoint },
@@ -235,43 +374,82 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
 
   updateJoint: (id, updates) => {
     get()._pushHistory();
-    const s = get(); const old = s.joints[id]; if (!old) return;
+    const s = get();
+    const old = s.joints[id];
+    if (!old) return;
     set({ joints: { ...s.joints, [id]: { ...old, ...updates } } });
   },
 
   removeJoint: (id) => {
     get()._pushHistory();
-    const s = get(); const j = s.joints[id]; if (!j) return;
-    const newJ = { ...s.joints }; delete newJ[id];
+    const s = get();
+    const j = s.joints[id];
+    if (!j) return;
+    const newJ = { ...s.joints };
+    delete newJ[id];
     const newF = { ...s.fasteners };
-    for (const [fid, f] of Object.entries(s.fasteners)) if (f.jointId === id) delete newF[fid];
+    for (const [fid, f] of Object.entries(s.fasteners))
+      if (f.jointId === id) delete newF[fid];
     // Remove FK from pieces
     let newParts = { ...s.parts };
     for (const p of [j.piece1Id, j.piece2Id]) {
       const part = newParts[p];
-      if (part) newParts[p] = { ...part, jointIds: part.jointIds.filter(jj => jj !== id) };
+      if (part)
+        newParts[p] = {
+          ...part,
+          jointIds: part.jointIds.filter((jj) => jj !== id),
+        };
     }
-    set({ joints: newJ, fasteners: newF, parts: newParts, selectedJointId: s.selectedJointId === id ? null : s.selectedJointId });
+    set({
+      joints: newJ,
+      fasteners: newF,
+      parts: newParts,
+      selectedJointId: s.selectedJointId === id ? null : s.selectedJointId,
+    });
   },
 
-  selectJoint: (id) => set({ selectedJointId: id, selectedPieceId: null, selectedDimensionId: null }),
+  selectJoint: (id) =>
+    set({
+      selectedJointId: id,
+      selectedPieceId: null,
+      selectedDimensionId: null,
+    }),
 
   addDimension: (p1, p2, value, labelOffset) => {
     get()._pushHistory();
-    set(s => ({ dimensions: [...s.dimensions, { id: uuidv4(), piece1Id: p1, piece2Id: p2, value, labelOffset }], _dimensionPending: null }));
+    set((s) => ({
+      dimensions: [
+        ...s.dimensions,
+        { id: uuidv4(), piece1Id: p1, piece2Id: p2, value, labelOffset },
+      ],
+      _dimensionPending: null,
+    }));
   },
 
   updateDimension: (id, updates) => {
     get()._pushHistory();
-    set(s => ({ dimensions: s.dimensions.map(d => d.id === id ? { ...d, ...updates } : d) }));
+    set((s) => ({
+      dimensions: s.dimensions.map((d) =>
+        d.id === id ? { ...d, ...updates } : d,
+      ),
+    }));
   },
 
   removeDimension: (id) => {
     get()._pushHistory();
-    set(s => ({ dimensions: s.dimensions.filter(d => d.id !== id), selectedDimensionId: s.selectedDimensionId === id ? null : s.selectedDimensionId }));
+    set((s) => ({
+      dimensions: s.dimensions.filter((d) => d.id !== id),
+      selectedDimensionId:
+        s.selectedDimensionId === id ? null : s.selectedDimensionId,
+    }));
   },
 
-  selectDimension: (id) => set({ selectedDimensionId: id, selectedPieceId: null, selectedJointId: null }),
+  selectDimension: (id) =>
+    set({
+      selectedDimensionId: id,
+      selectedPieceId: null,
+      selectedJointId: null,
+    }),
 
   resolveDirtyJoints: () => {
     const s = get();
@@ -281,7 +459,8 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
 
     for (const [jid, joint] of Object.entries(s.joints)) {
       if (!joint.dirty) continue;
-      const p1 = s.parts[joint.piece1Id]; const p2 = s.parts[joint.piece2Id];
+      const p1 = s.parts[joint.piece1Id];
+      const p2 = s.parts[joint.piece2Id];
       if (!p1 || !p2) continue;
 
       // Remove old fasteners for this joint
@@ -313,11 +492,28 @@ export const useBuilderStore = create<BuilderState>((set, get) => ({
     for (const p of loaded.pieces) parts[p.id] = { ...p, jointIds: [] };
     // Rebuild joint FKs
     for (const j of loaded.joints || []) {
-      if (parts[j.piece1Id]) parts[j.piece1Id] = { ...parts[j.piece1Id], jointIds: [...parts[j.piece1Id].jointIds, j.id] };
-      if (parts[j.piece2Id]) parts[j.piece2Id] = { ...parts[j.piece2Id], jointIds: [...parts[j.piece2Id].jointIds, j.id] };
+      if (parts[j.piece1Id])
+        parts[j.piece1Id] = {
+          ...parts[j.piece1Id],
+          jointIds: [...parts[j.piece1Id].jointIds, j.id],
+        };
+      if (parts[j.piece2Id])
+        parts[j.piece2Id] = {
+          ...parts[j.piece2Id],
+          jointIds: [...parts[j.piece2Id].jointIds, j.id],
+        };
     }
     const joints: Record<string, Joint> = {};
     for (const j of loaded.joints || []) joints[j.id] = { ...j, dirty: false };
-    set({ parts, joints, fasteners: {}, dimensions: loaded.dimensions || [], region: loaded.region, selectedPieceId: null, selectedJointId: null, selectedDimensionId: null });
+    set({
+      parts,
+      joints,
+      fasteners: {},
+      dimensions: loaded.dimensions || [],
+      region: loaded.region,
+      selectedPieceId: null,
+      selectedJointId: null,
+      selectedDimensionId: null,
+    });
   },
 }));
