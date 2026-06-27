@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, useMemo } from 'react';
 import { useBuilderStore } from '../store';
 import { getLumberById } from '../data';
 import { TransformControls } from '@react-three/drei';
@@ -6,14 +6,13 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
 interface LumberMeshProps { id: string }
-const SNAP_MM = 25;
 
-/**
- * LumberMesh — single mesh, no ghost.
- * TransformControls drives the mesh directly.
- * Snap is computed ON RELEASE only: find closest opposing face,
- * apply offset, create joint. During drag the piece moves freely.
- */
+const SNAP_THRESHOLD = 25;
+
+/* ---------------------------------------------------------------
+ * Core part: single mesh, TransformControls-driven.
+ * Snap on release with three joint types + fastener patterns.
+ * ------------------------------------------------------------ */
 export function LumberMesh({ id }: LumberMeshProps) {
   const piece = useBuilderStore(s => s.pieces.find(p => p.id === id));
   const selectedPieceId = useBuilderStore(s => s.selectedPieceId);
@@ -24,28 +23,31 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const allPieces = useBuilderStore(s => s.pieces);
 
   const [mesh, setMesh] = useState<THREE.Mesh | null>(null);
+  const meshRef = useRef<THREE.Mesh | null>(null);
+  if (mesh) meshRef.current = mesh;
+
   const [isDragging, setIsDragging] = useState(false);
-  const [nearSnap, setNearSnap] = useState(false);
-  const dragStartPos = useRef(new THREE.Vector3());
+  const [ctrlHeld, setCtrlHeld] = useState(false);
+  const [nearSnap, setNearSnap] = useState<{
+    type: 'butt' | 'tee' | 'corner';
+    otherId: string;
+    offset: THREE.Vector3;
+    position: [number, number, number];
+    normal: [number, number, number];
+  } | null>(null);
 
   if (!piece) return null;
   const lumber = getLumberById(piece.lumberId);
   if (!lumber) return null;
   const isSelected = selectedPieceId === id;
-  const args = [lumber.actualWidth, lumber.actualDepth, piece.length] as [number, number, number];
+  const args: [number, number, number] = [lumber.actualWidth, lumber.actualDepth, piece.length];
 
-  // --- Face-centre helper (pure function, no allocations per frame) ---
-  const faceCache = useRef<{ key: string; faces: { p: THREE.Vector3; n: THREE.Vector3 }[] } | null>(null);
-  const meshRef = useRef<THREE.Mesh | null>(null); // synced with state but available synchronously in callbacks
-  if (mesh) meshRef.current = mesh;
-  function getFaces(
-    p: [number, number, number], r: [number, number, number],
-    w: number, d: number, l: number
-  ): { p: THREE.Vector3; n: THREE.Vector3 }[] {
+  // ---- Face-centre helper with cache ----
+  const fcCache = useRef<{ key: string; faces: { p: THREE.Vector3; n: THREE.Vector3 }[] } | null>(null);
+  function getFaces(p: [number, number, number], r: [number, number, number], w: number, d: number, l: number) {
     const key = `${p.join(',')}|${r.join(',')}`;
-    if (faceCache.current && faceCache.current.key === key) return faceCache.current.faces;
-    const o = new THREE.Object3D();
-    o.position.set(...p); o.rotation.set(...r); o.updateMatrixWorld();
+    if (fcCache.current?.key === key) return fcCache.current.faces;
+    const o = new THREE.Object3D(); o.position.set(...p); o.rotation.set(...r); o.updateMatrixWorld();
     const m = o.matrixWorld, nm = new THREE.Matrix3().getNormalMatrix(m);
     const hw = w / 2, hd = d / 2, hl = l / 2;
     const raw: [number, number, number, number, number, number][] = [
@@ -55,78 +57,145 @@ export function LumberMesh({ id }: LumberMeshProps) {
       p: new THREE.Vector3(px,py,pz).applyMatrix4(m),
       n: new THREE.Vector3(nx,ny,nz).applyMatrix3(nm).normalize(),
     }));
-    faceCache.current = { key, faces };
+    fcCache.current = { key, faces };
     return faces;
   }
 
-  // --- Find closest opposing face between two positions ---
-  function findSnap(
-    myPos: [number, number, number], myRot: [number, number, number],
-  ): { otherId: string; offset: THREE.Vector3; position: [number, number, number]; normal: [number, number, number] } | null {
-    const myF = getFaces(myPos, myRot, lumber.actualWidth, lumber.actualDepth, piece.length);
-    let best = Infinity, bestOff = new THREE.Vector3(), bestId = '',
-        bestPos: [number, number, number] = [0, 0, 0], bestNorm: [number, number, number] = [0, 0, 0];
+  // ---- Compute snap (butt, T, or corner) ----
+  function findSnap(pos: [number, number, number], rot: [number, number, number]) {
+    const myF = getFaces(pos, rot, lumber.actualWidth, lumber.actualDepth, piece.length);
+    let best = Infinity, bestData: typeof nearSnap = null;
+
     for (const o of allPieces) {
       if (o.id === id) continue;
       const l = getLumberById(o.lumberId); if (!l) continue;
-      const of = getFaces(o.position, o.rotation, l.actualWidth, l.actualDepth, o.length);
-      for (const mf of myF) for (const oface of of) {
-        if (mf.n.dot(oface.n) < -0.9) {
+      const oF = getFaces(o.position, o.rotation, l.actualWidth, l.actualDepth, o.length);
+
+      for (const mf of myF) for (const oface of oF) {
+        const dot = mf.n.dot(oface.n);
+
+        // --- Butt joint: opposing faces (dot ≈ -1) ---
+        if (dot < -0.9) {
           const d = oface.p.clone().sub(mf.p);
           const nd = Math.abs(d.dot(mf.n));
-          if (nd < best) { best = nd; bestOff = mf.n.clone().multiplyScalar(d.dot(mf.n)); bestId = o.id;
-            bestPos = [oface.p.x, oface.p.y, oface.p.z]; bestNorm = [oface.n.x, oface.n.y, oface.n.z]; }
+          if (nd < best) {
+            best = nd;
+            bestData = {
+              type: 'butt', otherId: o.id,
+              offset: mf.n.clone().multiplyScalar(d.dot(mf.n)),
+              position: [oface.p.x, oface.p.y, oface.p.z] as [number, number, number],
+              normal: [oface.n.x, oface.n.y, oface.n.z] as [number, number, number],
+            };
+          }
+        }
+
+        // --- T-joint / Corner joint: perpendicular faces (dot ≈ 0) ---
+        if (Math.abs(dot) < 0.15) {
+          const d = oface.p.clone().sub(mf.p);
+          const dist = d.length();
+          if (dist < best) {
+            best = dist;
+            bestData = {
+              type: Math.abs(dot) < 0.1 ? 'tee' : 'corner',
+              otherId: o.id,
+              offset: d.clone(),
+              position: [oface.p.x, oface.p.y, oface.p.z] as [number, number, number],
+              normal: [oface.n.x, oface.n.y, oface.n.z] as [number, number, number],
+            };
+          }
         }
       }
     }
-    if (best < SNAP_MM && bestId) return { otherId: bestId, offset: bestOff, position: bestPos, normal: bestNorm };
+    if (best < SNAP_THRESHOLD && bestData) return bestData;
     return null;
   }
 
-  // --- Dragging handlers ---
-  const onDragStart = useCallback(() => {
-    setIsDragging(true); setNearSnap(false);
-  }, []);
+  // ---- Fastener pattern logic based on face width ----
+  function fastenerPattern(faceWidth: number) {
+    if (faceWidth < 50)  return { count: 1, spacing: 0, offset: 0 };           // single
+    if (faceWidth <= 150) return { count: 2, spacing: faceWidth * 0.5, offset: -faceWidth * 0.25 }; // dual at ¼ and ¾
+    const n = Math.max(3, Math.floor(faceWidth / 100));
+    const sp = faceWidth / (n + 1);
+    return { count: n, spacing: sp, offset: -(n - 1) * sp / 2 };              // multi every 100mm
+  }
 
+  // ---- Dragging ----
+  const onDragStart = useCallback(() => { setIsDragging(true); setNearSnap(null); }, []);
   const onDragEnd = useCallback(() => {
-    setIsDragging(false); setNearSnap(false);
+    setIsDragging(false);
     const m = meshRef.current; if (!m) return;
-
     const p: [number, number, number] = [m.position.x, m.position.y, m.position.z];
     const r: [number, number, number] = [m.rotation.x, m.rotation.y, m.rotation.z];
-    const snap = findSnap(p, r);
+    const snap = ctrlHeld ? null : findSnap(p, r);
+    setNearSnap(null);
 
     if (snap) {
-      const snapped: [number, number, number] = [p[0]+snap.offset.x, p[1]+snap.offset.y, p[2]+snap.offset.z];
+      const off: [number, number, number] = [snap.offset.x, snap.offset.y, snap.offset.z];
+      const snapped: [number, number, number] = [p[0]+off[0], p[1]+off[1], p[2]+off[2]];
       updatePiece(id, { position: snapped, rotation: r });
+
       const st = useBuilderStore.getState();
       const p1 = st.pieces.find(pp => pp.id === id)!;
       const p2 = st.pieces.find(pp => pp.id === snap.otherId);
       if (p1 && p2) {
         const nv = new THREE.Vector3(...snap.normal);
-        addJoint({ piece1Id: id, piece2Id: snap.otherId, position: snap.position, normal: snap.normal,
-          fixingType: 'Screws (Wood)', fixingCount: 4, fixingSpacing: 50,
-          fixingLength: thick(p1, nv) + Math.round(thick(p2, nv.clone().negate()) * 0.67), fixingEmbedPercent: 67 });
+        const t1 = thick(p1, nv);
+        const t2 = thick(p2, nv.clone().negate());
+        const p2l = getLumberById(p2.lumberId);
+        const fw = snap.type === 'butt'
+          ? Math.min(lumber.actualWidth, p2l?.actualWidth || 90)
+          : lumber.actualWidth;
+        const pat = fastenerPattern(fw);
+        addJoint({
+          piece1Id: id, piece2Id: snap.otherId,
+          position: snap.position, normal: snap.normal,
+          fixingType: 'Screws (Wood)', fixingCount: pat.count,
+          fixingSpacing: pat.spacing, fixingOffset: pat.offset,
+          fixingLength: Math.round(t1 + t2 * 0.75), fixingEmbedPercent: 75,
+        });
       }
     } else {
       updatePiece(id, { position: p, rotation: r });
     }
     m.position.set(...piece.position);
     m.rotation.set(...piece.rotation);
-  }, [id, updatePiece, addJoint, piece, allPieces, lumber]);
+  }, [id, updatePiece, addJoint, piece, allPieces, lumber, ctrlHeld]);
 
-  // --- Detect nearby snap during drag (for green glow only) ---
+  // ---- useFrame: update nearSnap during drag (visual only) ----
+  useFrame(() => {
+    if (!isDragging || !meshRef.current) { setNearSnap(null); return; }
+    const p: [number, number, number] = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
+    const r: [number, number, number] = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
+    const snap = ctrlHeld ? null : findSnap(p, r);
+    setNearSnap(snap);
+  });
 
+  // ---- Ctrl key tracking ----
+  const keyHandler = useCallback((e: KeyboardEvent) => setCtrlHeld(e.ctrlKey), []);
+  const keyUpHandler = useCallback((e: KeyboardEvent) => { if (!e.ctrlKey) setCtrlHeld(false); }, []);
+  React.useEffect(() => {
+    window.addEventListener('keydown', keyHandler);
+    window.addEventListener('keyup', keyUpHandler);
+    return () => { window.removeEventListener('keydown', keyHandler); window.removeEventListener('keyup', keyUpHandler); };
+  }, [keyHandler, keyUpHandler]);
 
   const onClick = useCallback((e: any) => { e.stopPropagation(); selectPiece(id); }, [id, selectPiece]);
 
-  // useFrame: detect nearby snap during drag (visual feedback only)
-  useFrame(() => {
-    if (!isDragging || !meshRef.current) { setNearSnap(false); return; }
-    const p: [number, number, number] = [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z];
-    const r: [number, number, number] = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
-    setNearSnap(!!findSnap(p, r));
-  });
+  // ---- Port nodes (visible when selected) ----
+  const portPositions = useMemo(() => {
+    if (!isSelected) return [];
+    return getFaces(piece.position, piece.rotation, lumber.actualWidth, lumber.actualDepth, piece.length);
+  }, [isSelected, piece.position, piece.rotation, lumber, piece.length]);
+
+  // ---- Ghost preview mesh (shown when near snap) ----
+  const ghostPos = useMemo(() => {
+    if (!nearSnap || !meshRef.current || ctrlHeld) return null;
+    return new THREE.Vector3(
+      meshRef.current.position.x + nearSnap.offset.x,
+      meshRef.current.position.y + nearSnap.offset.y,
+      meshRef.current.position.z + nearSnap.offset.z,
+    );
+  }, [nearSnap, ctrlHeld]);
 
   const edgeColor = nearSnap ? '#4ade80' : isDragging ? '#60a5fa' : isSelected ? '#ffffff' : '#8c6b4a';
 
@@ -141,6 +210,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
           onMouseUp={onDragEnd}
         />
       )}
+
+      {/* Main mesh */}
       <mesh
         ref={setMesh}
         position={piece.position} rotation={piece.rotation}
@@ -158,6 +229,33 @@ export function LumberMesh({ id }: LumberMeshProps) {
         </lineSegments>
       </mesh>
 
+      {/* Ghost preview — transparent copy at snapped position */}
+      {ghostPos && (
+        <mesh position={ghostPos} rotation={piece.rotation}>
+          <boxGeometry args={args} />
+          <meshStandardMaterial color="#4ade80" transparent opacity={0.25} depthWrite={false} />
+        </mesh>
+      )}
+
+      {/* Port nodes on selected piece */}
+      {isSelected && portPositions.map((fp, i) => (
+        <mesh key={i} position={fp.p}>
+          <sphereGeometry args={[4, 8, 8]} />
+          <meshBasicMaterial
+            color={nearSnap?.type === 'butt' ? '#4ade80' : nearSnap ? '#fbbf24' : '#3b82f6'}
+            transparent opacity={0.7}
+          />
+        </mesh>
+      ))}
+
+      {/* Ctrl indicator */}
+      {isSelected && ctrlHeld && (
+        <mesh position={[piece.position[0], piece.position[1] + 120, piece.position[2]]}>
+          <boxGeometry args={[80, 16, 4]} />
+          <meshBasicMaterial color="#f59e0b" transparent opacity={0.6} />
+        </mesh>
+      )}
+
       {isSelected && transformMode === 'resize' && (
         <group position={piece.position} rotation={piece.rotation}>
           <ResizeHandle piece={piece} lumber={lumber} side="end" updatePiece={updatePiece} />
@@ -168,7 +266,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
   );
 }
 
-// --- thickness helper ---
+// ---- Helpers ----
+
 function thick(piece: { lumberId: string; rotation: [number, number, number]; length: number }, dir: THREE.Vector3): number {
   const l = getLumberById(piece.lumberId); if (!l) return 38;
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
@@ -180,53 +279,53 @@ function thick(piece: { lumberId: string; rotation: [number, number, number]; le
   return piece.length;
 }
 
-// --- ResizeHandle ---
+// ---- ResizeHandle ----
 function ResizeHandle({ piece, lumber, side, updatePiece }: { piece: any; lumber: any; side: 'start' | 'end'; updatePiece: any }) {
   const { camera, raycaster, pointer } = useThree();
   const [dragging, setDragging] = useState(false);
-  const handleRef = useRef<THREE.Mesh>(null!);
-  const startLen = useRef(piece.length); const plane = useRef(new THREE.Plane());
-  const startPos = useRef(new THREE.Vector3()); const curLen = useRef(piece.length);
-  const zSign = side === 'end' ? 1 : -1;
+  const hRef = useRef<THREE.Mesh>(null!);
+  const st = useRef(piece.length); const pl = useRef(new THREE.Plane());
+  const sp = useRef(new THREE.Vector3()); const cl = useRef(piece.length);
+  const zs = side === 'end' ? 1 : -1;
   const onDown = useCallback((e: any) => {
     e.stopPropagation(); (e.target as any).setPointerCapture(e.pointerId);
-    startLen.current = piece.length; curLen.current = piece.length;
-    const w = new THREE.Vector3(); handleRef.current.getWorldPosition(w);
-    startPos.current.copy(w); const cd = new THREE.Vector3(); camera.getWorldDirection(cd);
-    plane.current.setFromNormalAndCoplanarPoint(cd, w); setDragging(true);
+    st.current = piece.length; cl.current = piece.length;
+    const w = new THREE.Vector3(); hRef.current.getWorldPosition(w);
+    sp.current.copy(w); const cd = new THREE.Vector3(); camera.getWorldDirection(cd);
+    pl.current.setFromNormalAndCoplanarPoint(cd, w); setDragging(true);
   }, [camera, piece]);
   const onUp = useCallback(() => {
     if (dragging) {
-      const nl = Math.max(10, Math.round(curLen.current));
+      const nl = Math.max(10, Math.round(cl.current));
       const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
       const lz = new THREE.Vector3(0,0,1).applyQuaternion(q);
-      const o = lz.clone().multiplyScalar((nl - piece.length) / 2 * zSign);
+      const o = lz.clone().multiplyScalar((nl - piece.length) / 2 * zs);
       updatePiece(piece.id, { length: nl, position: [piece.position[0]+o.x, piece.position[1]+o.y, piece.position[2]+o.z] });
     } setDragging(false);
-  }, [dragging, piece, zSign, updatePiece]);
+  }, [dragging, piece, zs, updatePiece]);
   useFrame(() => {
-    if (!dragging || !handleRef.current) return;
+    if (!dragging || !hRef.current) return;
     raycaster.setFromCamera(pointer, camera); const hit = new THREE.Vector3();
-    if (!raycaster.ray.intersectPlane(plane.current, hit)) return;
+    if (!raycaster.ray.intersectPlane(pl.current, hit)) return;
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...piece.rotation));
     const lz = new THREE.Vector3(0,0,1).applyQuaternion(q);
-    const zd = hit.clone().sub(startPos.current).dot(lz);
-    curLen.current = Math.max(10, Math.round(startLen.current + (side === 'end' ? zd : -zd)));
-    handleRef.current.parent!.position.z = zSign * curLen.current / 2;
-    const grp = handleRef.current.parent?.parent?.parent;
+    const zd = hit.clone().sub(sp.current).dot(lz);
+    cl.current = Math.max(10, Math.round(st.current + (side === 'end' ? zd : -zd)));
+    hRef.current.parent!.position.z = zs * cl.current / 2;
+    const grp = hRef.current.parent?.parent?.parent;
     if (grp) grp.children.forEach((c: THREE.Object3D) => {
-      if (c.type === 'Mesh' && c !== handleRef.current.parent && c !== handleRef.current) {
+      if (c.type === 'Mesh' && c !== hRef.current.parent && c !== hRef.current) {
         const m = c as THREE.Mesh;
-        if (m.geometry.type === 'BoxGeometry') m.geometry.copy(new THREE.BoxGeometry(lumber.actualWidth, lumber.actualDepth, curLen.current));
+        if (m.geometry.type === 'BoxGeometry') m.geometry.copy(new THREE.BoxGeometry(lumber.actualWidth, lumber.actualDepth, cl.current));
       }
     });
   });
   return (
-    <group position={[0, 0, zSign * piece.length / 2]}>
-      <mesh ref={handleRef} onPointerDown={onDown} onPointerUp={onUp} onPointerLeave={onUp}>
+    <group position={[0, 0, zs * piece.length / 2]}>
+      <mesh ref={hRef} onPointerDown={onDown} onPointerUp={onUp} onPointerLeave={onUp}>
         <boxGeometry args={[12,12,6]} /><meshBasicMaterial color={dragging?'#2563eb':'#3b82f6'} transparent opacity={0.85} />
       </mesh>
-      <mesh position={[0,0,zSign*-4]}><boxGeometry args={[2,2,4]} /><meshBasicMaterial color="#60a5fa" transparent opacity={0.5} /></mesh>
+      <mesh position={[0,0,zs*-4]}><boxGeometry args={[2,2,4]} /><meshBasicMaterial color="#60a5fa" transparent opacity={0.5} /></mesh>
     </group>
   );
 }
