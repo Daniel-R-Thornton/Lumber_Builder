@@ -47,23 +47,18 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const isSelected = selectedPieceId === id;
   const args: [number, number, number] = [lumber.actualWidth, lumber.actualDepth, piece.length];
 
-  // ---- Face-centre helper with cache ----
-  const fcCache = useRef<{ key: string; faces: { p: THREE.Vector3; n: THREE.Vector3 }[] } | null>(null);
+  // ---- Face-centre helper (no cache — always fresh) ----
   function getFaces(p: [number, number, number], r: [number, number, number], w: number, d: number, l: number) {
-    const key = `${p.join(',')}|${r.join(',')}`;
-    if (fcCache.current?.key === key) return fcCache.current.faces;
     const o = new THREE.Object3D(); o.position.set(...p); o.rotation.set(...r); o.updateMatrixWorld();
     const m = o.matrixWorld, nm = new THREE.Matrix3().getNormalMatrix(m);
     const hw = w / 2, hd = d / 2, hl = l / 2;
     const raw: [number, number, number, number, number, number][] = [
       [hw,0,0,1,0,0],[-hw,0,0,-1,0,0],[0,hd,0,0,1,0],[0,-hd,0,0,-1,0],[0,0,hl,0,0,1],[0,0,-hl,0,0,-1],
     ];
-    const faces = raw.map(([px,py,pz,nx,ny,nz]) => ({
+    return raw.map(([px,py,pz,nx,ny,nz]) => ({
       p: new THREE.Vector3(px,py,pz).applyMatrix4(m),
       n: new THREE.Vector3(nx,ny,nz).applyMatrix3(nm).normalize(),
     }));
-    fcCache.current = { key, faces };
-    return faces;
   }
 
   // ---- Compute snap (butt, T, or corner) ----
@@ -71,7 +66,11 @@ export function LumberMesh({ id }: LumberMeshProps) {
     const myF = getFaces(pos, rot, lumber.actualWidth, lumber.actualDepth, piece.length);
     let best = Infinity, bestData: typeof nearSnap = null;
 
-    for (const o of allPieces) {
+    const freshPieces = useBuilderStore.getState().pieces;
+    if (showDebug && freshPieces.some(p => p.id === id)) {
+      // Verify current piece is in the list but skipped
+    }
+    for (const o of freshPieces) {
       if (o.id === id) continue;
       const l = getLumberById(o.lumberId); if (!l) continue;
       const oF = getFaces(o.position, o.rotation, l.actualWidth, l.actualDepth, o.length);
@@ -118,7 +117,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
         console.log(`[SNAP] ${bestData.type} id=${bestData.otherId.slice(0,6)} dist=${best.toFixed(1)}mm  offset=(${bestData.offset.x.toFixed(0)},${bestData.offset.y.toFixed(0)},${bestData.offset.z.toFixed(0)})`);
         // Find the matching ghost face for the debug overlay
         const myF2 = getFaces(pos, rot, lumber.actualWidth, lumber.actualDepth, piece.length);
-        for (const mf of myF2) for (const o of allPieces) {
+        for (const mf of myF2) for (const o of freshPieces) {
           if (o.id === bestData.otherId) {
             const l = getLumberById(o.lumberId); if (!l) continue;
             for (const oface of getFaces(o.position, o.rotation, l.actualWidth, l.actualDepth, o.length)) {
@@ -237,11 +236,10 @@ export function LumberMesh({ id }: LumberMeshProps) {
     const snap = ctrlHeld ? null : findSnap(p, r);
     setNearSnap(snap);
 
-    // Acquire snap lock when within 5mm
-    if (snap) {
-      const d = new THREE.Vector3(...snap.position).distanceTo(
-        new THREE.Vector3(p[0]+snap.offset.x, p[1]+snap.offset.y, p[2]+snap.offset.z)
-      );
+    // Acquire snap lock when within 5mm of target face centre
+    if (snap && snap.offset) {
+      const ghostFace = new THREE.Vector3(p[0]+snap.offset.x, p[1]+snap.offset.y, p[2]+snap.offset.z);
+      const d = ghostFace.distanceTo(new THREE.Vector3(...snap.position));
       if (d < 5) {
         snapLockRef.current = {
           targetId: snap.otherId,
@@ -263,11 +261,20 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
   const onClick = useCallback((e: any) => { e.stopPropagation(); selectPiece(id); }, [id, selectPiece]);
 
-  // ---- Port nodes (visible when selected) ----
-  const portPositions = useMemo(() => {
-    if (!isSelected) return [];
-    return getFaces(piece.position, piece.rotation, lumber.actualWidth, lumber.actualDepth, piece.length);
-  }, [isSelected, piece.position, piece.rotation, lumber, piece.length]);
+  // ---- Port nodes — computed fresh each render from store position ----
+  // Uses inline computation to avoid any getFaces caching issues.
+  // This ensures port nodes always match the actual mesh position.
+  function getPorts() {
+    const o = new THREE.Object3D();
+    o.position.set(...piece.position); o.rotation.set(...piece.rotation); o.updateMatrixWorld();
+    const m = o.matrixWorld;
+    const hw = lumber.actualWidth / 2, hd = lumber.actualDepth / 2, hl = piece.length / 2;
+    const pts: [number, number, number][] = [
+      [hw,0,0],[-hw,0,0],[0,hd,0],[0,-hd,0],[0,0,hl],[0,0,-hl],
+    ];
+    return pts.map(([px,py,pz]) => new THREE.Vector3(px,py,pz).applyMatrix4(m));
+  }
+  const portPositions = getPorts();
 
   // ---- Ghost preview mesh (shown when near snap) ----
   const ghostPos = useMemo(() => {
@@ -321,7 +328,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
       {/* Port nodes on selected piece */}
       {isSelected && portPositions.map((fp, i) => (
-        <mesh key={i} position={fp.p}>
+        <mesh key={i} position={fp}>
           <sphereGeometry args={[4, 8, 8]} />
           <meshBasicMaterial
             color={nearSnap?.type === 'butt' ? '#4ade80' : nearSnap ? '#fbbf24' : '#3b82f6'}
