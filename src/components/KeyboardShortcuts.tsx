@@ -48,6 +48,14 @@ export function KeyboardShortcuts() {
         return;
       }
 
+      // Debug overlay: Ctrl+Shift+D
+      if (ctrl && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        state.toggleDebug();
+        console.log('[DEBUG] overlay ' + (state.showDebug ? 'OFF' : 'ON'));
+        return;
+      }
+
       // Measure mode: M
       if (!ctrl && !e.shiftKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
         e.preventDefault();

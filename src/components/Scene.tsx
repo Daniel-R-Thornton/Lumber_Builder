@@ -10,6 +10,7 @@ import { DimensionLine } from './DimensionLine';
 import { PendingIndicator } from './PendingIndicator';
 import { MeasureTargets } from './MeasureTargets';
 import { HumanScale } from './HumanScale';
+import { DebugOverlay } from './DebugOverlay';
 import { CameraDebugView } from './CameraDebugView';
 import { Move, RotateCw, Maximize2, Ruler, Drill, User } from 'lucide-react';
 
@@ -167,6 +168,7 @@ export function Scene() {
           <PendingIndicator />
           <MeasureTargets />
           <HumanScale />
+          <DebugOverlay />
         </Suspense>
 
         <Grid 

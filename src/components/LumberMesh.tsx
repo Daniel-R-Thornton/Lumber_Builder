@@ -21,6 +21,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const addJoint = useBuilderStore(s => s.addJoint);
   const transformMode = useBuilderStore(s => s.transformMode);
   const allPieces = useBuilderStore(s => s.pieces);
+  const showDebug = useBuilderStore(s => s.showDebug);
+  const setDebugSnap = useBuilderStore(s => s.setDebugSnap);
 
   const [mesh, setMesh] = useState<THREE.Mesh | null>(null);
   const meshRef = useRef<THREE.Mesh | null>(null);
@@ -110,7 +112,29 @@ export function LumberMesh({ id }: LumberMeshProps) {
         }
       }
     }
-    if (best < SNAP_THRESHOLD && bestData) return bestData;
+    if (best < SNAP_THRESHOLD && bestData) {
+      if (showDebug) {
+        console.log(`[SNAP] ${bestData.type} id=${bestData.otherId.slice(0,6)} dist=${best.toFixed(1)}mm  offset=(${bestData.offset.x.toFixed(0)},${bestData.offset.y.toFixed(0)},${bestData.offset.z.toFixed(0)})`);
+        // Find the matching ghost face for the debug overlay
+        const myF2 = getFaces(pos, rot, lumber.actualWidth, lumber.actualDepth, piece.length);
+        for (const mf of myF2) for (const o of allPieces) {
+          if (o.id === bestData.otherId) {
+            const l = getLumberById(o.lumberId); if (!l) continue;
+            for (const oface of getFaces(o.position, o.rotation, l.actualWidth, l.actualDepth, o.length)) {
+              if (mf.n.dot(oface.n) < -0.9 || Math.abs(mf.n.dot(oface.n)) < 0.15) {
+                const d = oface.p.clone().sub(mf.p);
+                const nd = Math.abs(d.dot(mf.n));
+                if (Math.abs(nd - best) < 1) {
+                  setDebugSnap({ ghostFace: [mf.p.x, mf.p.y, mf.p.z], targetFace: [oface.p.x, oface.p.y, oface.p.z], distance: best, type: bestData.type });
+                }
+              }
+            }
+          }
+        }
+      }
+      return bestData;
+    }
+    if (showDebug) setDebugSnap(null);
     return null;
   }
 
@@ -134,6 +158,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setNearSnap(null);
 
     if (snap) {
+      if (showDebug) console.log(`[SNAP-END] type=${snap.type} target=${snap.otherId.slice(0,6)} offset=(${snap.offset.x.toFixed(0)},${snap.offset.y.toFixed(0)},${snap.offset.z.toFixed(0)})`);
+
       // STEP 1: Compute rotation to align face normals
       let finalRot = r;
       if (snap.type === 'butt') {
