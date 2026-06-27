@@ -91,6 +91,7 @@ export function Scene() {
   const selectPiece = useBuilderStore(state => state.selectPiece);
   const selectJoint = useBuilderStore(state => state.selectJoint);
   const isOrthographic = useBuilderStore(state => state.isOrthographic);
+  const transformMode = useBuilderStore(state => state.transformMode);
   const measureMode = useBuilderStore(state => state.measureMode);
   const jointToolMode = useBuilderStore(state => state.jointToolMode);
   const _dimensionPending = useBuilderStore(state => state._dimensionPending);
@@ -177,7 +178,7 @@ export function Scene() {
           sectionColor="#cbd5e1"
         />
 
-        <OrbitControls makeDefault target={sceneCenter} />
+        <OrbitControls makeDefault target={sceneCenter} enabled={transformMode !== 'resize'} />
         
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
           <GizmoViewport axisColors={['#e07a5f', '#81b29a', '#3d5a80']} labelColor="white" />
