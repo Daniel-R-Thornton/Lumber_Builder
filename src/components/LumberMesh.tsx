@@ -32,7 +32,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const ghostPreviewRef = useRef<THREE.Mesh>(null!);
 
   const [isDragging, setIsDragging] = useState(false);
-  const draggingRef = useRef(false); // sync flag for useFrame
+  const draggingRef = useRef(false);
+  const dragStartRef = useRef(new THREE.Vector3());
   const [ctrlHeld, setCtrlHeld] = useState(false);
   const snapLockRef = useRef<{ targetId: string; targetPos: THREE.Vector3; targetNorm: THREE.Vector3 } | null>(null);
   interface SnapInfo {
@@ -156,6 +157,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setIsDragging(true); draggingRef.current = true;
     setNearSnap(null);
     snapLockRef.current = null;
+    if (meshRef.current) dragStartRef.current.copy(meshRef.current.position);
   }, []);
 
   const onDragEnd = useCallback(() => {
@@ -167,6 +169,10 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setNearSnap(null);
 
     if (snap) {
+      // Require minimum drag distance to prevent accidental joints
+      const dragDist = dragStartRef.current.distanceTo(new THREE.Vector3(p[0], p[1], p[2]));
+      if (dragDist < 50) { updatePiece(id, { position: p, rotation: r }); return; }
+
       if (showDebug) console.log(`[SNAP-END] type=${snap.type} target=${snap.otherId.slice(0,6)}`);
 
       // --- Surface-to-surface positioning ---
@@ -201,7 +207,21 @@ export function LumberMesh({ id }: LumberMeshProps) {
         p[2] + targetN.z * (fullSnapComp - dragComp),
       ];
 
-      if (showDebug) console.log(`[SNAP] finalPos=(${snapped.map(v=>v.toFixed(0)).join(',')})  targetFC=(${targetFC.x.toFixed(0)},${targetFC.y.toFixed(0)},${targetFC.z.toFixed(0)})  normal=(${targetN.x.toFixed(2)},${targetN.y.toFixed(2)},${targetN.z.toFixed(2)})  thick=${movingThick}`);
+      if (showDebug) console.log(`[SNAP] finalPos=(${snapped.map(v=>v.toFixed(0)).join(',')})  ...`);
+
+      // Collision check: reject if snapped position overlaps any other piece (except target)
+      const collide = (() => {
+        const hw = lumber.actualWidth / 2, hd = lumber.actualDepth / 2, hl = piece.length / 2;
+        const min = [snapped[0]-hw, snapped[1]-hd, snapped[2]-hl];
+        const max = [snapped[0]+hw, snapped[1]+hd, snapped[2]+hl];
+        for (const o of Object.values(useBuilderStore.getState().parts)) {
+          if (o.id === id || o.id === snap.otherId) continue;
+          const p = o.position;
+          if (p[0] >= min[0] && p[0] <= max[0] && p[1] >= min[1] && p[1] <= max[1] && p[2] >= min[2] && p[2] <= max[2]) return true;
+        }
+        return false;
+      })();
+      if (collide) { updatePiece(id, { position: p, rotation: r }); if (showDebug) console.log('[SNAP] REJECTED — collision'); return; }
 
       updatePiece(id, { position: snapped, rotation: finalRot });
 
