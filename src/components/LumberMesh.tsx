@@ -218,8 +218,8 @@ export function LumberMesh({ id }: LumberMeshProps) {
     } else {
       updatePiece(id, { position: p, rotation: r });
     }
-    m.position.set(...piece.position);
-    m.rotation.set(...piece.rotation);
+    // Do NOT reset mesh position here — piece in closure is stale.
+    // The next render's position={piece.position} prop will sync it.
   }, [id, updatePiece, addJoint, piece, allPieces, lumber, ctrlHeld]);
 
   // ---- useFrame: update nearSnap during drag (visual only) ----
