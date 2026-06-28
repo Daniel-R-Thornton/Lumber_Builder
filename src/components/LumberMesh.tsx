@@ -36,6 +36,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
   const dragStartRef = useRef(new THREE.Vector3());
   const [ctrlHeld, setCtrlHeld] = useState(false);
   const snapLockRef = useRef<{ targetId: string; targetPos: THREE.Vector3; targetNorm: THREE.Vector3 } | null>(null);
+  const lastSnapRef = useRef<typeof nearSnap>(null);
   interface SnapInfo {
     type: 'butt' | 'tee' | 'corner';
     otherId: string;
@@ -157,6 +158,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setIsDragging(true); draggingRef.current = true;
     setNearSnap(null);
     snapLockRef.current = null;
+    lastSnapRef.current = null;
     if (meshRef.current) dragStartRef.current.copy(meshRef.current.position);
   }, []);
 
@@ -165,7 +167,13 @@ export function LumberMesh({ id }: LumberMeshProps) {
     const m = meshRef.current; if (!m) return;
     const p: [number, number, number] = [m.position.x, m.position.y, m.position.z];
     const r: [number, number, number] = [m.rotation.x, m.rotation.y, m.rotation.z];
-    const snap = ctrlHeld ? null : findSnap(p, r);
+    // Use the LAST snap from useFrame (matches ghost preview), don't recompute
+    const snap = ctrlHeld ? null : lastSnapRef.current;
+    if (showDebug) {
+      const fresh = findSnap(p, r);
+      const match = fresh && snap && fresh.otherId === snap.otherId && Math.abs(fresh.offset.length() - snap.offset.length()) < 2;
+      console.log(`[SNAP] useFrame=${snap?.otherId?.slice(0,6)||'none'} fresh=${fresh?.otherId?.slice(0,6)||'none'} match=${match}`);
+    }
     setNearSnap(null);
 
     if (snap) {
@@ -209,7 +217,11 @@ export function LumberMesh({ id }: LumberMeshProps) {
         p[2] + targetN.z * (fullSnapComp - dragComp),
       ];
 
-      if (showDebug) console.log(`[SNAP] finalPos=(${snapped.map(v=>v.toFixed(0)).join(',')})  ...`);
+      if (showDebug) {
+        const ghostPos = ghostPreviewRef.current?.position;
+        const ghostStr = ghostPos ? `(${ghostPos.x.toFixed(0)},${ghostPos.y.toFixed(0)},${ghostPos.z.toFixed(0)})` : 'none';
+        console.log(`[SNAP] snapped=(${snapped.map(v=>v.toFixed(0)).join(',')}) ghost=${ghostStr} targetFC=(${targetFC.x.toFixed(0)},${targetFC.y.toFixed(0)},${targetFC.z.toFixed(0)}) normal=(${targetN.x.toFixed(2)},${targetN.y.toFixed(2)},${targetN.z.toFixed(2)}) thick=${movingThick} rot=(${finalRot.map(v=>v.toFixed(2)).join(',')})`);
+      }
 
       // Collision check: reject if snapped position overlaps any other piece (except target)
       const collide = (() => {
@@ -290,6 +302,7 @@ export function LumberMesh({ id }: LumberMeshProps) {
     const r: [number, number, number] = [meshRef.current.rotation.x, meshRef.current.rotation.y, meshRef.current.rotation.z];
     const snap = ctrlHeld ? null : findSnap(p, r);
     setNearSnap(snap);
+    lastSnapRef.current = snap; // store for onDragEnd (matches ghost preview)
 
     // Update ghost preview position (ref-based, follows drag)
     if (snap && !ctrlHeld && ghostPreviewRef.current) {
