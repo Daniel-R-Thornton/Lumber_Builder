@@ -33,7 +33,6 @@ export function LumberMesh({ id }: LumberMeshProps) {
 
   const [isDragging, setIsDragging] = useState(false);
   const draggingRef = useRef(false);
-  const dragStartRef = useRef(new THREE.Vector3());
   const [ctrlHeld, setCtrlHeld] = useState(false);
   const snapLockRef = useRef<{ targetId: string; targetPos: THREE.Vector3; targetNorm: THREE.Vector3 } | null>(null);
   const lastSnapRef = useRef<typeof nearSnap>(null);
@@ -159,7 +158,6 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setNearSnap(null);
     snapLockRef.current = null;
     lastSnapRef.current = null;
-    if (meshRef.current) dragStartRef.current.copy(meshRef.current.position);
   }, []);
 
   const onDragEnd = useCallback(() => {
@@ -229,28 +227,22 @@ export function LumberMesh({ id }: LumberMeshProps) {
       // Always snap to position
       updatePiece(id, { position: snapped, rotation: finalRot });
 
-      // Joint: only create if drag > 50mm (prevents accidental joints on brief contact)
-      const dragDist = dragStartRef.current.distanceTo(new THREE.Vector3(p[0], p[1], p[2]));
-      if (dragDist >= 50) {
-        const st = useBuilderStore.getState();
-        const p1 = st.parts[id]!;
-        const p2 = st.parts[snap.otherId];
-        if (p1 && p2) {
-          const t1 = thick(p1, targetN);
-          const t2 = thick(p2, targetN.clone().negate());
-          const p2l = getLumberById(p2.lumberId);
-          const pat = fastenerPattern(Math.min(lumber.actualWidth, p2l?.actualWidth || 90));
-          addJoint({
-            type: 'butt', dirty: false, piece1Id: id, piece2Id: snap.otherId,
-            position: snap.position, normal: snap.normal,
-            fixingType: 'Screws (Wood)', fixingCount: pat.count,
-            fixingSpacing: pat.spacing, fixingOffset: pat.offset,
-            fixingLength: Math.round(t1 + t2 * 0.75), fixingEmbedPercent: 75,
-          });
-          if (showDebug) console.log(`[SNAP] joint created (drag ${dragDist.toFixed(0)}mm)`);
-        }
-      } else if (showDebug) {
-        console.log(`[SNAP] snapped only (drag ${dragDist.toFixed(0)}mm < 50)`);
+      // Create joint (dedup in addJoint prevents duplicates)
+      const st = useBuilderStore.getState();
+      const p1 = st.parts[id]!;
+      const p2 = st.parts[snap.otherId];
+      if (p1 && p2) {
+        const t1 = thick(p1, targetN);
+        const t2 = thick(p2, targetN.clone().negate());
+        const p2l = getLumberById(p2.lumberId);
+        const pat = fastenerPattern(Math.min(lumber.actualWidth, p2l?.actualWidth || 90));
+        addJoint({
+          type: 'butt', dirty: false, piece1Id: id, piece2Id: snap.otherId,
+          position: snap.position, normal: snap.normal,
+          fixingType: 'Screws (Wood)', fixingCount: pat.count,
+          fixingSpacing: pat.spacing, fixingOffset: pat.offset,
+          fixingLength: Math.round(t1 + t2 * 0.75), fixingEmbedPercent: 75,
+        });
       }
     } else {
       updatePiece(id, { position: p, rotation: r });
