@@ -171,8 +171,10 @@ export function LumberMesh({ id }: LumberMeshProps) {
     if (snap) {
       // Require minimum drag distance to prevent accidental joints
       const dragDist = dragStartRef.current.distanceTo(new THREE.Vector3(p[0], p[1], p[2]));
-      if (dragDist < 50) { updatePiece(id, { position: p, rotation: r }); return; }
-
+      if (dragDist < 50) {
+        if (showDebug) console.log(`[SNAP] short drag ${dragDist.toFixed(0)}mm — no joint`);
+        updatePiece(id, { position: p, rotation: r }); return;
+      }
       if (showDebug) console.log(`[SNAP-END] type=${snap.type} target=${snap.otherId.slice(0,6)}`);
 
       // --- Surface-to-surface positioning ---
@@ -212,16 +214,25 @@ export function LumberMesh({ id }: LumberMeshProps) {
       // Collision check: reject if snapped position overlaps any other piece (except target)
       const collide = (() => {
         const hw = lumber.actualWidth / 2, hd = lumber.actualDepth / 2, hl = piece.length / 2;
-        const min = [snapped[0]-hw, snapped[1]-hd, snapped[2]-hl];
-        const max = [snapped[0]+hw, snapped[1]+hd, snapped[2]+hl];
+        const myMin = [snapped[0]-hw, snapped[1]-hd, snapped[2]-hl];
+        const myMax = [snapped[0]+hw, snapped[1]+hd, snapped[2]+hl];
         for (const o of Object.values(useBuilderStore.getState().parts)) {
           if (o.id === id || o.id === snap.otherId) continue;
-          const p = o.position;
-          if (p[0] >= min[0] && p[0] <= max[0] && p[1] >= min[1] && p[1] <= max[1] && p[2] >= min[2] && p[2] <= max[2]) return true;
+          const ol = getLumberById(o.lumberId); if (!ol) continue;
+          const ohw = ol.actualWidth / 2, ohd = ol.actualDepth / 2, ohl = o.length / 2;
+          const oMin = [o.position[0]-ohw, o.position[1]-ohd, o.position[2]-ohl];
+          const oMax = [o.position[0]+ohw, o.position[1]+ohd, o.position[2]+ohl];
+          const overlap = myMin[0] < oMax[0] && myMax[0] > oMin[0] &&
+                          myMin[1] < oMax[1] && myMax[1] > oMin[1] &&
+                          myMin[2] < oMax[2] && myMax[2] > oMin[2];
+          if (overlap) {
+            if (showDebug) console.log(`[SNAP] COLLISION with ${o.id.slice(0,6)} at (${o.position.map(v=>v.toFixed(0)).join(',')})`);
+            return true;
+          }
         }
         return false;
       })();
-      if (collide) { updatePiece(id, { position: p, rotation: r }); if (showDebug) console.log('[SNAP] REJECTED — collision'); return; }
+      if (collide) { updatePiece(id, { position: p, rotation: r }); return; }
 
       updatePiece(id, { position: snapped, rotation: finalRot });
 
