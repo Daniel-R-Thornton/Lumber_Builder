@@ -87,7 +87,14 @@ export function LumberMesh({ id }: LumberMeshProps) {
         if (dot < -0.9) {
           const d = oface.p.clone().sub(mf.p);
           const nd = Math.abs(d.dot(mf.n));
-          if (nd < best) {
+          // Tangential check: faces must overlap, not just be near along normal
+          const tan = d.clone().sub(mf.n.clone().multiplyScalar(d.dot(mf.n)));
+          const tanDist = tan.length();
+          const maxTan = Math.max(
+            Math.max(lumber.actualWidth, piece.length),
+            Math.max(l.actualWidth, o.length)
+          );
+          if (nd < best && tanDist < maxTan) {
             best = nd;
             bestData = {
               type: 'butt', otherId: o.id,
@@ -103,7 +110,9 @@ export function LumberMesh({ id }: LumberMeshProps) {
         if (Math.abs(dot) < 0.15) {
           const d = oface.p.clone().sub(mf.p);
           const dist = d.length();
-          if (dist < best) {
+          // Perpendicular joints need the faces to be close in all dimensions
+          // (not just along one axis) for a valid connection
+          if (dist < best && dist < Math.max(lumber.actualWidth, piece.length)) {
             best = dist;
             bestData = {
               type: Math.abs(dot) < 0.1 ? 'tee' : 'corner',
