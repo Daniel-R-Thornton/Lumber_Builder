@@ -249,11 +249,23 @@ export function LumberMesh({ id }: LumberMeshProps) {
     } else {
       updatePiece(id, { position: p, rotation: r });
     }
+    // Sync mesh to store position (in case updatePiece changed it)
+    if (meshRef.current) {
+      const st = useBuilderStore.getState().parts[id];
+      if (st) {
+        meshRef.current.position.set(...st.position);
+        meshRef.current.rotation.set(...st.rotation);
+      }
+    }
   }, [id, updatePiece, addJoint, piece, allPieces, lumber, ctrlHeld, showDebug]);
 
   // ---- useFrame: proximity check + snap lock ----
   useFrame(() => {
-    if (!draggingRef.current || !meshRef.current) { setNearSnap(null); return; }
+    if (!draggingRef.current || !meshRef.current) {
+      setNearSnap(null);
+      if (ghostPreviewRef.current) ghostPreviewRef.current.visible = false;
+      return;
+    }
     const mp = meshRef.current.position;
 
     // Snap lock: if locked and still within 10mm of target, keep locked
