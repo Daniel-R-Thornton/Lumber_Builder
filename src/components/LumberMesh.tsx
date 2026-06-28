@@ -177,24 +177,12 @@ export function LumberMesh({ id }: LumberMeshProps) {
     setNearSnap(null);
 
     if (snap) {
-      // Require minimum drag distance to prevent accidental joints
-      const dragDist = dragStartRef.current.distanceTo(new THREE.Vector3(p[0], p[1], p[2]));
-      if (dragDist < 50) {
-        if (showDebug) console.log(`[SNAP] short drag ${dragDist.toFixed(0)}mm — no joint`);
-        updatePiece(id, { position: p, rotation: r }); return;
-      }
-      if (showDebug) console.log(`[SNAP-END] type=${snap.type} target=${snap.otherId.slice(0,6)}`);
-
-      // --- Surface-to-surface positioning ---
-      // finalPos = targetFaceCentre + targetNormal * (movingPieceThickness / 2)
+      // --- Surface-to-surface positioning (ALWAYS applied) ---
       const targetFC = new THREE.Vector3(...snap.position);
       const targetN = new THREE.Vector3(...snap.normal).normalize();
-
-      // Compute moving piece thickness along the snap direction
       const movingN = new THREE.Vector3(...snap.ghostNormal).normalize();
       const movingThick = thick(piece, movingN);
 
-      // Lock rotation: align ghost normal opposite to target normal
       let finalRot = r;
       if (snap.type === 'butt') {
         const q = new THREE.Quaternion().setFromUnitVectors(movingN, targetN.clone().negate());
@@ -204,10 +192,6 @@ export function LumberMesh({ id }: LumberMeshProps) {
         finalRot = [e.x, e.y, e.z] as [number, number, number];
       }
 
-      // Axis-locked snap: only change the NORMAL component of position.
-      // Tangential position stays at the user's drag position.
-      // fullSnapPos = targetFC + targetN * (thickness/2)  (full 3D)
-      // snappedPos = dragPos + (fullSnapComponent - dragComponent) * targetN
       const dragPos = new THREE.Vector3(p[0], p[1], p[2]);
       const dragComp = dragPos.dot(targetN);
       const fullSnapComp = targetFC.dot(targetN) + movingThick / 2;
@@ -220,54 +204,53 @@ export function LumberMesh({ id }: LumberMeshProps) {
       if (showDebug) {
         const ghostPos = ghostPreviewRef.current?.position;
         const ghostStr = ghostPos ? `(${ghostPos.x.toFixed(0)},${ghostPos.y.toFixed(0)},${ghostPos.z.toFixed(0)})` : 'none';
-        console.log(`[SNAP] snapped=(${snapped.map(v=>v.toFixed(0)).join(',')}) ghost=${ghostStr} targetFC=(${targetFC.x.toFixed(0)},${targetFC.y.toFixed(0)},${targetFC.z.toFixed(0)}) normal=(${targetN.x.toFixed(2)},${targetN.y.toFixed(2)},${targetN.z.toFixed(2)}) thick=${movingThick} rot=(${finalRot.map(v=>v.toFixed(2)).join(',')})`);
+        console.log(`[SNAP] pos=(${snapped.map(v=>v.toFixed(0)).join(',')}) ghost=${ghostStr} norm=(${targetN.x.toFixed(2)},${targetN.y.toFixed(2)},${targetN.z.toFixed(2)}) thick=${movingThick}`);
       }
 
-      // Collision check: reject if snapped position overlaps any other piece (except target)
+      // Collision check
       const collide = (() => {
         const hw = lumber.actualWidth / 2, hd = lumber.actualDepth / 2, hl = piece.length / 2;
-        const myMin = [snapped[0]-hw, snapped[1]-hd, snapped[2]-hl];
-        const myMax = [snapped[0]+hw, snapped[1]+hd, snapped[2]+hl];
+        const mn = [snapped[0]-hw, snapped[1]-hd, snapped[2]-hl];
+        const mx = [snapped[0]+hw, snapped[1]+hd, snapped[2]+hl];
         for (const o of Object.values(useBuilderStore.getState().parts)) {
           if (o.id === id || o.id === snap.otherId) continue;
           const ol = getLumberById(o.lumberId); if (!ol) continue;
-          const ohw = ol.actualWidth / 2, ohd = ol.actualDepth / 2, ohl = o.length / 2;
-          const oMin = [o.position[0]-ohw, o.position[1]-ohd, o.position[2]-ohl];
-          const oMax = [o.position[0]+ohw, o.position[1]+ohd, o.position[2]+ohl];
-          const overlap = myMin[0] < oMax[0] && myMax[0] > oMin[0] &&
-                          myMin[1] < oMax[1] && myMax[1] > oMin[1] &&
-                          myMin[2] < oMax[2] && myMax[2] > oMin[2];
-          if (overlap) {
-            if (showDebug) console.log(`[SNAP] COLLISION with ${o.id.slice(0,6)} at (${o.position.map(v=>v.toFixed(0)).join(',')})`);
+          const om = [o.position[0]-ol.actualWidth/2, o.position[1]-ol.actualDepth/2, o.position[2]-o.length/2];
+          const ox = [o.position[0]+ol.actualWidth/2, o.position[1]+ol.actualDepth/2, o.position[2]+o.length/2];
+          if (mn[0] < ox[0] && mx[0] > om[0] && mn[1] < ox[1] && mx[1] > om[1] && mn[2] < ox[2] && mx[2] > om[2]) {
+            if (showDebug) console.log(`[SNAP] collide ${o.id.slice(0,6)}`);
             return true;
           }
         }
         return false;
       })();
-      if (collide) { updatePiece(id, { position: p, rotation: r }); return; }
+      if (collide) { updatePiece(id, { position: p, rotation: r }); if (showDebug) console.log('[SNAP] rejected — collision'); return; }
 
+      // Always snap to position
       updatePiece(id, { position: snapped, rotation: finalRot });
 
-      // Create joint
-      const st = useBuilderStore.getState();
-      const p1 = st.parts[id]!;
-      const p2 = st.parts[snap.otherId];
-      if (p1 && p2) {
-        const t1 = thick(p1, targetN);
-        const t2 = thick(p2, targetN.clone().negate());
-        const p2l = getLumberById(p2.lumberId);
-        const fw = snap.type === 'butt'
-          ? Math.min(lumber.actualWidth, p2l?.actualWidth || 90)
-          : lumber.actualWidth;
-        const pat = fastenerPattern(fw);
-        addJoint({
-          type: 'butt', dirty: false,
-          piece1Id: id, piece2Id: snap.otherId,
-          position: snap.position, normal: snap.normal,
-          fixingType: 'Screws (Wood)', fixingCount: pat.count,
-          fixingSpacing: pat.spacing, fixingOffset: pat.offset,
-          fixingLength: Math.round(t1 + t2 * 0.75), fixingEmbedPercent: 75,
-        });
+      // Joint: only create if drag > 50mm (prevents accidental joints on brief contact)
+      const dragDist = dragStartRef.current.distanceTo(new THREE.Vector3(p[0], p[1], p[2]));
+      if (dragDist >= 50) {
+        const st = useBuilderStore.getState();
+        const p1 = st.parts[id]!;
+        const p2 = st.parts[snap.otherId];
+        if (p1 && p2) {
+          const t1 = thick(p1, targetN);
+          const t2 = thick(p2, targetN.clone().negate());
+          const p2l = getLumberById(p2.lumberId);
+          const pat = fastenerPattern(Math.min(lumber.actualWidth, p2l?.actualWidth || 90));
+          addJoint({
+            type: 'butt', dirty: false, piece1Id: id, piece2Id: snap.otherId,
+            position: snap.position, normal: snap.normal,
+            fixingType: 'Screws (Wood)', fixingCount: pat.count,
+            fixingSpacing: pat.spacing, fixingOffset: pat.offset,
+            fixingLength: Math.round(t1 + t2 * 0.75), fixingEmbedPercent: 75,
+          });
+          if (showDebug) console.log(`[SNAP] joint created (drag ${dragDist.toFixed(0)}mm)`);
+        }
+      } else if (showDebug) {
+        console.log(`[SNAP] snapped only (drag ${dragDist.toFixed(0)}mm < 50)`);
       }
     } else {
       updatePiece(id, { position: p, rotation: r });
